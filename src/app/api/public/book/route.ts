@@ -10,15 +10,14 @@ export const dynamic = "force-dynamic";
 const META_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "ref", "referrer"] as const;
 
 /**
- * POST /api/public/book { host, type, start, name, email, guests, answers, timezone, meta, company_url }
- * Books one slot (cal.ts book: live re-check, race-safe insert, Google event with Meet). The
- * `company_url` field is a honeypot the page hides from people: a bot that fills it gets a fake
- * success and nothing is booked.
+ * POST /api/public/book { host, type, start, name, email, guests, answers, timezone, meta }
+ * Books one slot (cal.ts book: live re-check, race-safe insert, Google event with Meet). No
+ * honeypot field: browser autofill fills hidden fields for real guests, who then saw a fake
+ * "You're booked". The per-network rate limit in the book flow is the spam guard.
  */
 export async function POST(req: Request) {
   try {
     const b = await readBody(req);
-    if (typeof b.company_url === "string" && b.company_url.trim()) return NextResponse.json({ ok: true });
     const start = Date.parse(String(b.start ?? ""));
     if (!isHostSlug(b.host) || !isSlug(b.type, 61) || !Number.isFinite(start)) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
     const svc = db();

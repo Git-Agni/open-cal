@@ -342,13 +342,6 @@
 .req {
   color: var(--accent);
 }
-.hp {
-  position: absolute;
-  left: -10000px;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-}
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -406,10 +399,56 @@
   font-size: 14px;
 }
 
-/* Done */
+/* Done: a narrow, centred card */
 .done {
-  padding: 36px 28px;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 36px 28px 32px;
   text-align: center;
+}
+.doneTitle {
+  margin: 8px 0 0;
+  font-size: 24px;
+  line-height: 1.25;
+  font-weight: 700;
+}
+.doneZone {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.doneEvent {
+  margin: 22px 0 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.doneEvent strong {
+  color: #f4f1ee;
+}
+.doneNote {
+  margin: 14px auto 0;
+  max-width: 360px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.doneNote strong {
+  color: #f4f1ee;
+  word-break: break-all;
+}
+.doneActions {
+  margin-top: 22px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+.doneLink {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--faint);
 }
 .check {
   width: 56px;
@@ -421,18 +460,6 @@
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 26px;
-}
-.doneFacts {
-  margin: 20px auto 0;
-  max-width: 420px;
-  text-align: left;
-  display: grid;
-  gap: 8px;
-  font-size: 14px;
-  color: var(--muted);
-}
-.doneFacts strong {
-  color: #f4f1ee;
 }
 .foot {
   margin-top: 28px;

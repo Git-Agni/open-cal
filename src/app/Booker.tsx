@@ -355,7 +355,6 @@ function DetailsForm({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [showGuests, setShowGuests] = useState(false);
   const [guests, setGuests] = useState("");
-  const [hp, setHp] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -388,7 +387,7 @@ function DetailsForm({
       const r = await fetch("/api/public/book", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ host: host.slug, type: type.slug, start: slot, name, email, guests, answers, timezone: tz, meta, company_url: hp }),
+        body: JSON.stringify({ host: host.slug, type: type.slug, start: slot, name, email, guests, answers, timezone: tz, meta }),
       });
       const body = await r.json().catch(() => null);
       if (!r.ok) {
@@ -399,7 +398,9 @@ function DetailsForm({
         }
         throw new Error(body?.error ?? "failed");
       }
-      onBooked((body?.booking as Booked) ?? null);
+      // A 2xx without a booking is not a booking: never show "You're booked" for it.
+      if (!body?.booking) throw new Error("failed");
+      onBooked(body.booking as Booked);
     } catch (e2) {
       setErr(errorText((e2 as Error).message, type.questions));
     } finally {
@@ -474,12 +475,6 @@ function DetailsForm({
               )}
             </label>
           ))}
-          <div className={s.hp} aria-hidden="true">
-            <label>
-              Company URL
-              <input tabIndex={-1} autoComplete="off" value={hp} onChange={(e) => setHp(e.target.value)} />
-            </label>
-          </div>
         </>
       )}
       {err && (
@@ -506,35 +501,33 @@ function DoneView({ reschedule, slotLabel, tz, booked: b }: { reschedule: boolea
         ✓
       </div>
       <div className={s.eyebrow}>{reschedule ? "Moved" : "You're booked"}</div>
-      <h2 className={s.title}>{slotLabel}</h2>
-      <p className={s.sub}>{tz.replace(/_/g, " ")}</p>
-      <div className={s.doneFacts}>
-        {b && (
-          <>
-            <div>
-              <strong>{b.event}</strong> with {b.host}
-            </div>
-            <div>
-              A calendar invite is on its way to <strong>{b.email}</strong> with the Google Meet link.
-            </div>
+      <h2 className={s.doneTitle}>{slotLabel}</h2>
+      <p className={s.doneZone}>{tz.replace(/_/g, " ")}</p>
+      {b ? (
+        <>
+          <p className={s.doneEvent}>
+            <strong>{b.event}</strong>
+            <br />
+            with {b.host}
+          </p>
+          <p className={s.doneNote}>
+            The calendar invite with the Google Meet link is on its way to <strong>{b.email}</strong>.
+          </p>
+          <div className={s.doneActions}>
             {b.meet_url && (
-              <div>
-                Meet:{" "}
-                <a href={b.meet_url} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>
-                  {b.meet_url.replace(/^https:\/\//, "")}
-                </a>
-              </div>
-            )}
-            <div>
-              Need to change it?{" "}
-              <a href={b.manage_url} style={{ color: "inherit" }}>
-                Reschedule or cancel
+              <a className={s.primary} href={b.meet_url} target="_blank" rel="noopener noreferrer">
+                Join Google Meet
               </a>
-            </div>
-          </>
-        )}
-        {!b && <div>Everyone on the invite has been sent the new time.</div>}
-      </div>
+            )}
+            <a className={s.ghost} href={b.manage_url}>
+              Reschedule or cancel
+            </a>
+          </div>
+          {b.meet_url && <p className={s.doneLink}>{b.meet_url.replace(/^https:\/\//, "")}</p>}
+        </>
+      ) : (
+        <p className={s.doneNote}>Everyone on the invite has been sent the new time.</p>
+      )}
     </div>
   );
 }

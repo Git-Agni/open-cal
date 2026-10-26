@@ -19,7 +19,7 @@ We built this at [Agniverse](https://agniverse.co) to replace Calendly for our t
 - **Links that don't break.** Rename an event's link and the old one keeps redirecting to it, `utm_` tags included. Duplicate an event type in one click (the copy starts switched off).
 - **Bio and links.** A photo, a headline and a few lines about the host. Descriptions take `[label](https://...)` links.
 - **Race-safe.** A partial unique index means two guests can never book the same start. The loser gets "that time was just taken".
-- **Basic abuse guards.** A honeypot field, and a limit of 5 bookings per network per hour (IPs are stored as a keyed hash, never raw).
+- **Basic abuse guards.** A limit of 5 bookings per network per hour (IPs are stored as a keyed hash, never raw).
 - **Admin page** at `/admin` behind one password. Manage pages, event types, hours, calendars and bookings for everyone on the deploy.
 - **Optional host email.** A card to the host with the time in both zones, a Join button and the guest's answers, sent from the host's own Gmail through the API.
 
