@@ -8,6 +8,13 @@ describe("mail", () => {
     expect(m).toContain("Reply-To: guest@example.org");
     expect(m).not.toMatch(/\r\nBcc:/);
     expect(m).toContain(Buffer.from("Hi").toString("base64"));
+    expect(m).toContain("Content-Type: text/plain");
+  });
+
+  it("adds an HTML twin when given", () => {
+    const m = buildMime({ from: "host@example.com", to: ["host@example.com"], subject: "x", text: "Hi", html: "<b>Hi</b>" });
+    expect(m).toContain("multipart/alternative");
+    expect(m).toContain(Buffer.from("<b>Hi</b>").toString("base64"));
   });
 });
 

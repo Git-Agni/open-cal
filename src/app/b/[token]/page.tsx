@@ -20,7 +20,7 @@ export default async function ManagePage({ params }: { params: Promise<{ token: 
       <ManageView
         token={token}
         host={publicHost(host)}
-        type={type ? publicType(type as CalEventType) : null}
+        type={type ? publicType(type as CalEventType, host) : null}
         booking={{
           event: booking.event_name,
           start: booking.start_at,

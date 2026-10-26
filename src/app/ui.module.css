@@ -19,6 +19,8 @@
 }
 
 .wrap {
+  width: 100%;
+  box-sizing: border-box;
   max-width: 1040px;
   margin: 0 auto;
   padding: 40px 16px 64px;
@@ -27,8 +29,35 @@
   max-width: 640px;
 }
 
+.bio {
+  margin: 14px 0 0;
+  color: #cfc8c2;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+.hostRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.avatarSm {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  flex: none;
+}
+.rich a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .card {
   background: var(--card);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
   border: 1px solid var(--line);
   border-radius: 20px;
   backdrop-filter: blur(8px);

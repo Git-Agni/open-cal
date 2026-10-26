@@ -18,7 +18,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body style={{ margin: 0, background: "#08080a" }}>
         <div className={s.root}>
           {children}
-          <p className={s.foot}>Booked with open-cal</p>
+          {process.env.HIDE_CREDIT !== "1" && (
+            <p className={s.foot}>
+              Booked with <a href="https://github.com/Git-Agni/open-cal">open-cal</a> by <a href="https://agniverse.co">Agniverse</a>
+            </p>
+          )}
         </div>
       </body>
     </html>

@@ -2,10 +2,9 @@
 
 Booking pages that run on your own Google Calendar. One Next.js app, one Supabase database, one Google service account. No per-seat pricing.
 
-I built this to replace Calendly for my team. Calendly charges per seat for something that is, underneath, one call to Google's free/busy API plus an event insert. So this does exactly that and nothing else.
+We built this at [Agniverse](https://agniverse.co) to replace Calendly for our team. Calendly charges per seat for something that is, underneath, one call to Google's free/busy API plus an event insert. So this does exactly that and nothing else. The live one is [cal.agniverse.co/an-nayal](https://cal.agniverse.co/an-nayal).
 
-![Booking page](docs/screenshots/booking.png)
-<!-- screenshot placeholder: the month grid + times on a host's event page -->
+![The live booking page at cal.agniverse.co: month grid, open days, times in the guest's zone](docs/preview.png)
 
 ## What you get
 
@@ -13,16 +12,16 @@ I built this to replace Calendly for my team. Calendly charges per seat for some
 - **Real availability.** Slots come from live Google free/busy across every calendar you tick, including calendars from other accounts shared with "See only free/busy". Nothing about your calendar is stored or shown to guests, only open start times.
 - **Google does the invites.** The booking is created on the host's calendar with the host as organizer and a Google Meet link. Google sends the invite, the reminders, the update when a time moves and the cancellation. There is no guest email code in this repo.
 - **Reschedule and cancel links.** Every invite carries a private link (`/b/<token>`) where the guest moves or cancels the meeting. Moving re-checks free/busy and patches the same Google event.
-- **A form like Calendly's.** Name, email, "Add guests" (up to 10), plus your own questions (short text, long text, link, phone, pick one). Answers go into the invite, the admin and the optional host email.
-- **Rules per event type.** Length, start-time grid, minimum notice, how far ahead, buffers before and after, max bookings per day, extra attendees on every call.
-- **Weekly hours and date overrides** in the host's time zone. DST is handled with `Intl` only, no date library. The slot engine is pure functions with unit tests (`src/lib/core.ts`).
+- **A form like Calendly's.** Name, email, "Add guests" (up to 10, switchable per event), plus your own questions (short text, long text, link, phone, pick one). Answers go into the invite, the admin and the optional host email.
+- **Rules per event type.** Length, start-time grid, minimum notice, how far ahead, buffers before and after, max bookings per day, extra attendees on every call, extra calendars that must be free too.
+- **Weekly hours and date overrides** in the host's time zone, and any event can keep its own hours and dates instead, like Calendly's per-event schedules. DST is handled with `Intl` only, no date library. The slot engine is pure functions with unit tests (`src/lib/core.ts`).
+- **Fast pages.** The whole booking window's times load with the page from one free/busy read, so the calendar paints ready and month changes are instant.
+- **Links that don't break.** Rename an event's link and the old one keeps redirecting to it, `utm_` tags included. Duplicate an event type in one click (the copy starts switched off).
+- **Bio and links.** A photo, a headline and a few lines about the host. Descriptions take `[label](https://...)` links.
 - **Race-safe.** A partial unique index means two guests can never book the same start. The loser gets "that time was just taken".
 - **Basic abuse guards.** A honeypot field, and a limit of 5 bookings per network per hour (IPs are stored as a keyed hash, never raw).
 - **Admin page** at `/admin` behind one password. Manage pages, event types, hours, calendars and bookings for everyone on the deploy.
-- **Optional host email.** A short note to the host with the guest's answers, sent from the host's own Gmail through the API.
-
-![Admin](docs/screenshots/admin.png)
-<!-- screenshot placeholder: the admin Event types tab -->
+- **Optional host email.** A card to the host with the time in both zones, a Join button and the guest's answers, sent from the host's own Gmail through the API.
 
 ## What it is not
 
@@ -47,10 +46,14 @@ One service account, many hosts. Each Google call is made as the host (`subject`
 
 You need about 20 minutes, a Google Workspace super admin, a Supabase account and a Vercel account.
 
+```bash
+git clone https://github.com/Git-Agni/open-cal.git
+```
+
 ### 1. Supabase
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Open the SQL editor, paste [`supabase/schema.sql`](supabase/schema.sql) and run it. It creates `cal_hosts`, `cal_event_types` and `cal_bookings` with row level security on and no policies, so only the service-role key can read them.
+2. Open the SQL editor, paste [`supabase/schema.sql`](supabase/schema.sql) and run it (safe to run again after an update: it adds new columns to an existing database). It creates `cal_hosts`, `cal_event_types` and `cal_bookings` with row level security on and no policies, so only the service-role key can read them.
 3. From Project settings > API, copy the project URL (`SUPABASE_URL`) and the `service_role` key (`SUPABASE_SERVICE_ROLE_KEY`). Keep that key server-side only.
 
 ### 2. Google Cloud project
@@ -106,6 +109,7 @@ The app owns the whole domain: `/<host>` and `/<host>/<event>` are public, `/b/<
 | `DEFAULT_HOST` | no | A host slug. The bare domain redirects to that page. |
 | `HOST_EMAILS` | no | See below. |
 | `IP_HASH_SALT` | no | Key for hashing guest IPs (rate limit). Defaults to `ADMIN_PASSWORD`. |
+| `HIDE_CREDIT` | no | `1` removes the "Booked with open-cal by Agniverse" line under the pages. |
 
 `HOST_EMAILS=gmail` turns on the host notification: each new, moved or cancelled booking sends the host a plain-text note from their own mailbox with the guest's answers, reply-to the guest. Needs the Gmail API enabled and the `gmail.send` scope on the delegation entry. Leave it unset and Google's own calendar notifications are all you get.
 
@@ -127,6 +131,7 @@ Local dev talks to the real Google calendars of the hosts you configure, so a te
 ## Code map
 
 - `src/lib/core.ts` time zones, slot generation, input checks. Pure, unit tested.
+- `src/lib/email.ts` the invite text and the host email (HTML card + plain text). Pure, unit tested.
 - `src/lib/google.ts` Calendar (free/busy, calendar list, insert / patch / delete event) and the optional Gmail send, as each host via delegation.
 - `src/lib/cal.ts` data access and the booking flow (check, insert, Google, roll back on failure).
 - `src/lib/auth.ts` the admin password and its signed cookie.
@@ -142,6 +147,10 @@ Local dev talks to the real Google calendars of the hosts you configure, so a te
 - Admin writes check the request origin on top of a `SameSite=Lax` httpOnly cookie. Login is slowed after 5 wrong tries per IP.
 - The admin is single-password by design. If several people need their own logins, put your auth provider in front of `/admin` and `/api/admin`.
 
+## Credits
+
+Built by [Agniverse](https://agniverse.co). The "Booked with open-cal by Agniverse" line under each page is on by default; set `HIDE_CREDIT=1` to turn it off. If you ship one, tag [@consumerxai](https://x.com/consumerxai), we'd love to see it.
+
 ## License
 
-[MIT](LICENSE)
+MIT. See [LICENSE](LICENSE).

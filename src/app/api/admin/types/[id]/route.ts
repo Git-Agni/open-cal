@@ -24,6 +24,10 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const { id } = await params;
     const current = await load(id);
     const patch = parseTypePatch(await readBody(req), current);
+    // A new link keeps the old one alive as a redirect, so shared links never break.
+    if (patch.slug && patch.slug !== current.slug) {
+      patch.previous_slugs = [...new Set([...(current.previous_slugs ?? []), current.slug])].filter((s) => s !== patch.slug);
+    }
     const r = await db().from("cal_event_types").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id).select("*").single();
     if (slugConflict(r.error)) throw new Error("slug_taken");
     if (r.error) throw new Error(r.error.message);

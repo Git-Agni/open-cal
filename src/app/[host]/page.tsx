@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { fmtDuration, isHostSlug } from "@/lib/core";
 import { eventTypes, hostBySlug } from "@/lib/cal";
+import { RichText } from "../RichText";
 import s from "../ui.module.css";
 
 export const dynamic = "force-dynamic";
@@ -38,9 +39,18 @@ export default async function HostPage({ params }: Params) {
         <div>
           <div className={s.eyebrow}>Book a call</div>
           <h2 className={s.title}>{host.name}</h2>
-          {host.headline && <p className={s.sub}>{host.headline}</p>}
+          {host.headline && (
+            <p className={`${s.sub} ${s.rich}`}>
+              <RichText text={host.headline} />
+            </p>
+          )}
         </div>
       </div>
+      {host.bio && (
+        <p className={`${s.bio} ${s.rich}`} style={{ margin: "-8px 0 24px" }}>
+          <RichText text={host.bio} />
+        </p>
+      )}
       <div className={s.types}>
         {types.map((t) => (
           <Link key={t.id} href={`/${host.slug}/${t.slug}`} className={`${s.card} ${s.typeCard}`}>

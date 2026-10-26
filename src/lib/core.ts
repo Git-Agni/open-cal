@@ -206,6 +206,22 @@ export type SlotInput = {
 
 export type Slot = { start: number; end: number; date: string };
 
+type Schedule = { timezone: string | null; weekly_hours: WeeklyHours | null; date_overrides: DateOverrides | null };
+
+/**
+ * The hours that apply to an event: its own week and zone when it has them, else the
+ * host's; date overrides from both, the event's winning on the same date (host days off still
+ * close the event unless the event re-opens that date itself).
+ */
+export function scheduleFor(host: Schedule & { timezone: string }, type: Partial<Schedule>): { timezone: string; weekly: WeeklyHours; overrides: DateOverrides } {
+  const own = type.weekly_hours != null;
+  return {
+    timezone: (own && type.timezone) || host.timezone,
+    weekly: own ? type.weekly_hours! : (host.weekly_hours ?? {}),
+    overrides: { ...(host.date_overrides ?? {}), ...(type.date_overrides ?? {}) },
+  };
+}
+
 /** The ranges open on one host-local date: the override if there is one, else the weekday's. */
 export function rangesFor(date: string, weekly: WeeklyHours, overrides: DateOverrides): TimeRange[] {
   if (Object.prototype.hasOwnProperty.call(overrides, date)) return overrides[date] ?? [];
@@ -257,6 +273,20 @@ export function isSlug(s: unknown, max = 41): s is string {
 
 export function isHostSlug(s: unknown): s is string {
   return isSlug(s, 41) && s.length >= 2 && !(RESERVED_SLUGS as readonly string[]).includes(s);
+}
+
+/**
+ * slugify for a field being typed into: same rules, but a dash at the end stays, so "intro-"
+ * can become "intro-call" (slugify would eat the dash on every keystroke). Run slugify on save.
+ */
+export function slugTyping(s: string, max = 40): string {
+  return s
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, max);
 }
 
 /** "Ada Lovelace" -> "ada-lovelace". */

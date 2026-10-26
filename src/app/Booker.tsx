@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { addDays, fmtDuration, localDate, type Question } from "@/lib/core";
 import type { PublicEventType, PublicHost } from "@/lib/cal";
+import { RichText } from "./RichText";
 import s from "./ui.module.css";
 
 /**
@@ -16,6 +17,9 @@ type Props = {
   type: PublicEventType;
   /** Rescheduling an existing booking (the guest's manage link). */
   reschedule?: { token: string; currentStart: string };
+  /** Every open start (ISO) over the whole booking window, read on the server with the page, so
+   * the calendar paints with its times and month changes need no request. Absent: fetch per month. */
+  initialSlots?: string[];
 };
 
 type Booked = { start: string; end: string; event: string; host: string; meet_url: string | null; manage_url: string; email: string };
@@ -73,7 +77,7 @@ function errorText(code: string, questions: Question[]): string {
   return "Something went wrong. Please try again.";
 }
 
-export function Booker({ host, type, reschedule }: Props) {
+export function Booker({ host, type, reschedule, initialSlots }: Props) {
   const [tz, setTz] = useState("UTC");
   const [h24, setH24] = useState(false);
   const [ready, setReady] = useState(false);
@@ -92,7 +96,10 @@ export function Booker({ host, type, reschedule }: Props) {
   const shownMonth = month ?? monthOf(todayGuest);
   const lastMonth = monthOf(addDays(todayGuest, type.max_days_ahead + 1));
 
-  const [slots, setSlots] = useState<Record<string, string[]>>({});
+  // `all` = the server's full window (no requests while it holds); `fetched` = the per-month
+  // fallback when it is missing or was dropped after a slot was taken.
+  const [all, setAll] = useState<string[] | null>(initialSlots ?? null);
+  const [fetched, setFetched] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [autoAdvanced, setAutoAdvanced] = useState(false);
@@ -103,18 +110,37 @@ export function Booker({ host, type, reschedule }: Props) {
   const [step, setStep] = useState<"pick" | "form" | "done">("pick");
   const [booked, setBooked] = useState<Booked | null>(null);
 
-  // Times for the shown month in the guest's zone. Host-local dates can be a day either side.
+  const slots = useMemo(() => {
+    if (!all) return fetched;
+    const byDay: Record<string, string[]> = {};
+    for (const iso of all) {
+      const d = localDate(Date.parse(iso), tz);
+      if (monthOf(d) === shownMonth) (byDay[d] ??= []).push(iso);
+    }
+    return byDay;
+  }, [all, fetched, tz, shownMonth]);
+
+  // A month with nothing left (late in the month) moves on once by itself.
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !all || autoAdvanced || month !== null) return;
+    if (Object.keys(slots).length === 0 && shownMonth < lastMonth && all.length > 0) {
+      setAutoAdvanced(true);
+      setMonth(shiftMonth(shownMonth, 1));
+    }
+  }, [ready, all, slots, autoAdvanced, month, shownMonth, lastMonth]);
+
+  // Fallback: times for the shown month in the guest's zone. Host-local dates can be a day either side.
+  useEffect(() => {
+    if (!ready || all) return;
     const ctrl = new AbortController();
     const first = `${shownMonth}-01`;
     const last = `${shownMonth}-${String(daysInMonth(shownMonth)).padStart(2, "0")}`;
-    const todayHost = localDate(Date.now(), host.timezone);
+    const todayHost = localDate(Date.now(), type.timezone);
     const from = addDays(first, -1) < todayHost ? todayHost : addDays(first, -1);
     const horizon = addDays(todayHost, type.max_days_ahead + 1);
     const to = addDays(last, 1) > horizon ? horizon : addDays(last, 1);
     if (from > to) {
-      setSlots({});
+      setFetched({});
       return;
     }
     setLoading(true);
@@ -131,7 +157,7 @@ export function Booker({ host, type, reschedule }: Props) {
           if (monthOf(d) !== shownMonth) continue;
           (byDay[d] ??= []).push(iso);
         }
-        setSlots(byDay);
+        setFetched(byDay);
         // A month with nothing left (late in the month) moves on once by itself.
         if (!autoAdvanced && month === null && Object.keys(byDay).length === 0 && shownMonth < lastMonth) {
           setAutoAdvanced(true);
@@ -144,7 +170,7 @@ export function Booker({ host, type, reschedule }: Props) {
       .finally(() => setLoading(false));
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, shownMonth, tz, reload, host.slug, type.slug]);
+  }, [ready, all, shownMonth, tz, reload, host.slug, type.slug, type.timezone]);
 
   const fmtTime = (iso: string) => new Intl.DateTimeFormat(undefined, { timeZone: tz, hour: "numeric", minute: "2-digit", hour12: !h24 }).format(new Date(iso));
   const fmtDay = (date: string) =>
@@ -173,7 +199,13 @@ export function Booker({ host, type, reschedule }: Props) {
   return (
     <div className={`${s.card} ${s.booker}`}>
       <aside className={s.info}>
-        <div className={s.eyebrow}>{host.name}</div>
+        <div className={s.hostRow}>
+          {host.avatar_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className={s.avatarSm} src={host.avatar_url} alt="" />
+          )}
+          <div className={s.eyebrow}>{host.name}</div>
+        </div>
         <h2 className={s.title}>{type.name}</h2>
         <ul className={s.facts}>
           <li>
@@ -187,7 +219,12 @@ export function Booker({ host, type, reschedule }: Props) {
           )}
           {reschedule && <li>Now: {fmtFull(reschedule.currentStart)}</li>}
         </ul>
-        {type.description && <p className={s.sub}>{type.description}</p>}
+        {type.description && (
+          <p className={`${s.sub} ${s.rich}`}>
+            <RichText text={type.description} />
+          </p>
+        )}
+
       </aside>
 
       {step === "pick" ? (
@@ -278,6 +315,8 @@ export function Booker({ host, type, reschedule }: Props) {
           onTaken={() => {
             setStep("pick");
             setSlot(null);
+            // The server's copy is stale now: read live times month by month from here on.
+            setAll(null);
             setReload((n) => n + 1);
           }}
           onBooked={(b) => {
@@ -385,7 +424,7 @@ function DetailsForm({
             </span>
             <input className={s.input} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required maxLength={254} autoComplete="email" />
           </label>
-          {showGuests ? (
+          {!type.allow_guests ? null : showGuests ? (
             <label className={s.label}>
               <span>Guest emails</span>
               <textarea

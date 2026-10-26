@@ -206,25 +206,40 @@ export async function deleteEvent(subject: string, calendarId: string, eventId: 
 
 /* ── Gmail (optional host notifications) ──────────────────────────────────────────── */
 
-export type MailInput = { from: string; fromName?: string; to: string[]; replyTo?: string; subject: string; text: string };
+export type MailInput = { from: string; fromName?: string; to: string[]; replyTo?: string; subject: string; text: string; html?: string };
 
 const encodeHeader = (s: string) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${Buffer.from(s, "utf8").toString("base64")}?=`);
 /** Header values never carry a line break (header injection). */
 const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ");
+const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
 
-/** A plain-text RFC 2822 message. Exported for the unit test. */
+/** An RFC 2822 message: plain text, plus an HTML twin when given. Exported for the unit test. */
 export function buildMime(m: MailInput): string {
   const from = m.fromName ? `${encodeHeader(oneLine(m.fromName))} <${oneLine(m.from)}>` : oneLine(m.from);
-  return [
+  const head = [
     `From: ${from}`,
     `To: ${m.to.map(oneLine).join(", ")}`,
     ...(m.replyTo ? [`Reply-To: ${oneLine(m.replyTo)}`] : []),
     `Subject: ${encodeHeader(oneLine(m.subject))}`,
     "MIME-Version: 1.0",
+  ];
+  if (!m.html) return [...head, "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", "", b64(m.text), ""].join("\r\n");
+  const alt = `alt_${Math.random().toString(36).slice(2)}`;
+  return [
+    ...head,
+    `Content-Type: multipart/alternative; boundary="${alt}"`,
+    "",
+    `--${alt}`,
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: base64",
     "",
-    Buffer.from(m.text, "utf8").toString("base64"),
+    b64(m.text),
+    `--${alt}`,
+    "Content-Type: text/html; charset=UTF-8",
+    "Content-Transfer-Encoding: base64",
+    "",
+    b64(m.html),
+    `--${alt}--`,
     "",
   ].join("\r\n");
 }

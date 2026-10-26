@@ -13,6 +13,7 @@ create table if not exists cal_hosts (
   slug               text not null unique check (slug ~ '^[a-z0-9][a-z0-9-]{1,40}$'),
   name               text not null,
   headline           text,                               -- one line under the name on the page
+  bio                text,                               -- a few lines about the host, [label](https://...) links
   avatar_url         text,
   timezone           text not null default 'UTC',
   -- {"1":[{"start":"08:00","end":"13:00"}], ... } keyed by weekday 0 (Sun) - 6 (Sat), host-local
@@ -43,6 +44,13 @@ create table if not exists cal_event_types (
   questions        jsonb not null default '[]'::jsonb,
   extra_attendees  text[] not null default '{}',         -- also invited (e.g. a teammate)
   color            text,
+  -- Own hours for this event; null = the host's. Its date overrides sit on top of the host's.
+  weekly_hours     jsonb,
+  date_overrides   jsonb,
+  timezone         text,                                 -- zone for the own hours; null = the host's
+  allow_guests     boolean not null default true,        -- the form's "Add guests"
+  extra_busy_calendar_ids text[] not null default '{}',  -- calendars only this event also checks
+  previous_slugs   text[] not null default '{}',         -- old links, redirected to slug
   position         int not null default 0,
   active           boolean not null default true,
   created_at       timestamptz not null default now(),
@@ -81,6 +89,15 @@ create unique index if not exists cal_bookings_host_start_live
   on cal_bookings (host_id, start_at) where status = 'confirmed';
 create index if not exists cal_bookings_host_start_idx on cal_bookings (host_id, start_at desc);
 create index if not exists cal_bookings_ip_recent_idx on cal_bookings (ip_hash, created_at desc);
+
+-- Databases created from an earlier version of this file: add the later columns.
+alter table cal_hosts       add column if not exists bio text;
+alter table cal_event_types add column if not exists weekly_hours jsonb;
+alter table cal_event_types add column if not exists date_overrides jsonb;
+alter table cal_event_types add column if not exists timezone text;
+alter table cal_event_types add column if not exists allow_guests boolean not null default true;
+alter table cal_event_types add column if not exists extra_busy_calendar_ids text[] not null default '{}';
+alter table cal_event_types add column if not exists previous_slugs text[] not null default '{}';
 
 alter table cal_hosts       enable row level security;
 alter table cal_event_types enable row level security;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { calUrl, DEFAULT_QUESTIONS, fmtDuration, slugify, WEEKDAYS, type Question, type QuestionKind, type TimeRange, type WeeklyHours } from "@/lib/core";
+import { calUrl, DEFAULT_QUESTIONS, fmtDuration, slugify, slugTyping, WEEKDAYS, type Question, type QuestionKind, type TimeRange, type WeeklyHours } from "@/lib/core";
 import type { CalBooking, CalEventType, CalHost } from "@/lib/cal";
 import type { CalendarInfo } from "@/lib/google";
 import s from "../ui.module.css";
@@ -65,15 +65,22 @@ function allZones(current?: string | null): string[] {
   return current && !list.includes(current) ? [current, ...list] : list;
 }
 
-function ZoneSelect({ value, onChange }: { value: string; onChange: (z: string) => void }) {
-  return (
-    <select className={s.select} value={value} onChange={(e) => onChange(e.target.value)}>
+function ZoneSelect({ value, onChange, label }: { value: string; onChange: (z: string) => void; label?: string }) {
+  const select = (
+    <select className={s.select} aria-label={label ?? "Time zone"} value={value} onChange={(e) => onChange(e.target.value)}>
       {allZones(value).map((z) => (
         <option key={z} value={z}>
           {z}
         </option>
       ))}
     </select>
+  );
+  if (!label) return select;
+  return (
+    <label className={s.label} style={{ maxWidth: 360 }}>
+      <span>{label}</span>
+      {select}
+    </label>
   );
 }
 
@@ -227,7 +234,7 @@ function SetupForm({ onDone }: { onDone: (id: string) => void }) {
     setBusy(true);
     setErr(null);
     try {
-      const r = await api<{ host: CalHost }>("/api/admin", "POST", { email, name, slug: slug || slugify(name), timezone: tz });
+      const r = await api<{ host: CalHost }>("/api/admin", "POST", { email, name, slug: slugify(slug) || slugify(name), timezone: tz });
       onDone(r.host.id);
     } catch (e) {
       setErr(say(e));
@@ -249,7 +256,7 @@ function SetupForm({ onDone }: { onDone: (id: string) => void }) {
       </label>
       <label className={s.label}>
         <span>Link</span>
-        <input className={s.input} value={slug} maxLength={41} placeholder={slugify(name)} onChange={(e) => setSlug(slugify(e.target.value))} />
+        <input className={s.input} value={slug} maxLength={41} placeholder={slugify(name)} onChange={(e) => setSlug(slugTyping(e.target.value))} />
         <span className={s.hint}>{calUrl(slug || slugify(name) || "...").replace(/^https?:\/\//, "")}</span>
       </label>
       <label className={s.label}>
@@ -297,6 +304,22 @@ function LinkBar({ host }: { host: CalHost }) {
 
 function TypesTab({ host, types, onChange }: { host: CalHost; types: CalEventType[]; onChange: () => Promise<void> }) {
   const [edit, setEdit] = useState<CalEventType | "new" | null>(null);
+  const [copying, setCopying] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  // Copy an event with everything on it, then open the copy (it starts switched off).
+  const duplicate = async (t: CalEventType) => {
+    setCopying(t.id);
+    setErr(null);
+    try {
+      const r = await api<{ type: CalEventType }>(`/api/admin/types/${t.id}/duplicate`, "POST", {});
+      await onChange();
+      setEdit(r.type);
+    } catch (e) {
+      setErr(say(e));
+    } finally {
+      setCopying(null);
+    }
+  };
   return (
     <div className={`${s.card} ${s.panel}`}>
       <div className={s.bar}>
@@ -305,6 +328,7 @@ function TypesTab({ host, types, onChange }: { host: CalHost; types: CalEventTyp
           New event type
         </button>
       </div>
+      {err && <p className={s.error}>{err}</p>}
       {types.length === 0 ? (
         <p className={s.empty}>No event types yet. Add one, like a 15-minute intro call.</p>
       ) : (
@@ -332,9 +356,14 @@ function TypesTab({ host, types, onChange }: { host: CalHost; types: CalEventTyp
                     <span className={`${s.badge} ${t.active ? s.badgeOk : ""}`}>{t.active ? "On" : "Off"}</span>
                   </td>
                   <td onClick={(e) => e.stopPropagation()}>
-                    <a href={calUrl(host.slug, t.slug)} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
-                      Open
-                    </a>
+                    <span className={s.row}>
+                      <a href={calUrl(host.slug, t.slug)} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
+                        Open
+                      </a>
+                      <button type="button" className={`${s.ghost} ${s.small}`} disabled={copying === t.id} onClick={() => duplicate(t)}>
+                        {copying === t.id ? "Copying…" : "Duplicate"}
+                      </button>
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -344,9 +373,11 @@ function TypesTab({ host, types, onChange }: { host: CalHost; types: CalEventTyp
       )}
       {edit && (
         <TypeEditor
+          key={edit === "new" ? "new" : edit.id}
           host={host}
           type={edit === "new" ? null : edit}
           onClose={() => setEdit(null)}
+          onDuplicate={(t) => void duplicate(t)}
           onSaved={async () => {
             setEdit(null);
             await onChange();
@@ -369,7 +400,19 @@ function NumberField({ label, value, onChange, min, max, step, hint }: { label: 
   );
 }
 
-function TypeEditor({ host, type, onClose, onSaved }: { host: CalHost; type: CalEventType | null; onClose: () => void; onSaved: () => Promise<void> }) {
+function TypeEditor({
+  host,
+  type,
+  onClose,
+  onSaved,
+  onDuplicate,
+}: {
+  host: CalHost;
+  type: CalEventType | null;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+  onDuplicate?: (t: CalEventType) => void;
+}) {
   const [f, setF] = useState(() => ({
     name: type?.name ?? "",
     slug: type?.slug ?? "",
@@ -384,6 +427,12 @@ function TypeEditor({ host, type, onClose, onSaved }: { host: CalHost; type: Cal
     extra: (type?.extra_attendees ?? []).join(", "),
     active: type?.active ?? true,
     questions: type?.questions ?? DEFAULT_QUESTIONS,
+    allow_guests: type?.allow_guests !== false,
+    extraBusy: (type?.extra_busy_calendar_ids ?? []).join(", "),
+    own_hours: type?.weekly_hours != null,
+    timezone: type?.timezone ?? host.timezone,
+    weekly: (type?.weekly_hours ?? host.weekly_hours ?? {}) as WeeklyHours,
+    overrides: (type?.date_overrides ?? {}) as Record<string, TimeRange[]>,
   }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -395,7 +444,7 @@ function TypeEditor({ host, type, onClose, onSaved }: { host: CalHost; type: Cal
     setErr(null);
     const body = {
       name: f.name.trim(),
-      slug: f.slug || slugify(f.name, 60),
+      slug: slugify(f.slug, 60) || slugify(f.name, 60),
       description: f.description,
       duration_min: Number(f.duration_min),
       increment_min: Number(f.increment_min),
@@ -407,6 +456,12 @@ function TypeEditor({ host, type, onClose, onSaved }: { host: CalHost; type: Cal
       extra_attendees: f.extra.split(/[\s,]+/).filter(Boolean),
       active: f.active,
       questions: f.questions.map((q) => ({ ...q, id: q.id || slugify(q.label, 30) || `q${Math.random().toString(36).slice(2, 6)}` })),
+      allow_guests: f.allow_guests,
+      extra_busy_calendar_ids: f.extraBusy.split(/[\s,]+/).filter(Boolean),
+      // Own hours, or null to follow the page's hours.
+      weekly_hours: f.own_hours ? cleanWeekly(f.weekly) : null,
+      timezone: f.own_hours ? f.timezone : null,
+      date_overrides: Object.keys(f.overrides).length ? f.overrides : null,
     };
     try {
       if (type) await api(`/api/admin/types/${type.id}`, "PATCH", body);
@@ -438,10 +493,15 @@ function TypeEditor({ host, type, onClose, onSaved }: { host: CalHost; type: Cal
       onClose={onClose}
       footer={
         <div className={s.bar} style={{ marginBottom: 0 }}>
-          <div>
+          <div className={s.actions}>
             {type && (
               <button type="button" className={`${s.ghost} ${s.danger}`} onClick={remove} disabled={busy}>
                 Delete
+              </button>
+            )}
+            {type && onDuplicate && (
+              <button type="button" className={s.ghost} onClick={() => onDuplicate(type)} disabled={busy}>
+                Duplicate
               </button>
             )}
           </div>
@@ -463,13 +523,13 @@ function TypeEditor({ host, type, onClose, onSaved }: { host: CalHost; type: Cal
         </label>
         <label className={s.label}>
           <span>Link</span>
-          <input className={s.input} value={f.slug} maxLength={61} placeholder={slugify(f.name, 60)} onChange={(e) => set("slug", slugify(e.target.value, 60))} />
+          <input className={s.input} value={f.slug} maxLength={61} placeholder={slugify(f.name, 60)} onChange={(e) => set("slug", slugTyping(e.target.value, 60))} />
           <span className={s.hint}>{calUrl(host.slug, f.slug || slugify(f.name, 60) || "...").replace(/^https?:\/\//, "")}</span>
         </label>
         <label className={`${s.label} ${s.full}`}>
           <span>Description</span>
           <textarea className={s.textarea} value={f.description} maxLength={3000} onChange={(e) => set("description", e.target.value)} />
-          <span className={s.hint}>Shown next to the calendar.</span>
+          <span className={s.hint}>Shown next to the calendar. Link a word like this: [our site](https://example.com). Plain https:// links work too.</span>
         </label>
         <NumberField label="Length (minutes)" min={5} max={480} value={f.duration_min} onChange={num("duration_min")} />
         <NumberField label="Start times every (minutes)" min={5} max={240} value={f.increment_min} onChange={num("increment_min")} hint="15-minute calls on a 30-minute grid start at :00 and :30." />
@@ -479,19 +539,53 @@ function TypeEditor({ host, type, onClose, onSaved }: { host: CalHost; type: Cal
         <NumberField label="Buffer after (minutes)" min={0} max={240} value={f.buffer_after_min} onChange={num("buffer_after_min")} />
         <NumberField label="Most bookings a day" min={1} max={50} value={f.max_per_day} onChange={(n) => set("max_per_day", n)} hint="Empty for no limit." />
         <label className={s.label}>
+          <span>Also check these calendars</span>
+          <input className={s.input} value={f.extraBusy} onChange={(e) => set("extraBusy", e.target.value)} placeholder="teammate@yourcompany.com" />
+          <span className={s.hint}>On top of the Calendars tab, for this event only (a teammate who must be free too).</span>
+        </label>
+        <label className={s.label}>
           <span>Also invite</span>
           <input className={s.input} value={f.extra} onChange={(e) => set("extra", e.target.value)} placeholder="teammate@yourcompany.com" />
           <span className={s.hint}>Emails, comma separated (someone who joins every call).</span>
         </label>
-        <label className={`${s.check2} ${s.full}`}>
-          <input type="checkbox" checked={f.active} onChange={(e) => set("active", e.target.checked)} /> Bookable
-        </label>
+        <div className={`${s.row} ${s.full}`} style={{ gap: 24 }}>
+          <label className={s.check2}>
+            <input type="checkbox" checked={f.active} onChange={(e) => set("active", e.target.checked)} /> Bookable
+          </label>
+          <label className={s.check2}>
+            <input type="checkbox" checked={f.allow_guests} onChange={(e) => set("allow_guests", e.target.checked)} /> Guests can add other people
+          </label>
+        </div>
       </div>
 
       <h3 className={s.h3} style={{ marginTop: 24 }}>
-        Questions
+        Hours for this event
       </h3>
-      <p className={s.hint}>Name and email are always asked. These come after, and land in the booking, the invite and the host email.</p>
+      <p className={s.hint}>Use the page&apos;s hours (the Hours tab), or give this event its own.</p>
+      <div className={s.row}>
+        <button type="button" className={`${s.tab} ${!f.own_hours ? s.tabOn : ""}`} onClick={() => set("own_hours", false)}>
+          Page hours ({host.timezone})
+        </button>
+        <button type="button" className={`${s.tab} ${f.own_hours ? s.tabOn : ""}`} onClick={() => set("own_hours", true)}>
+          Own hours
+        </button>
+      </div>
+      {f.own_hours && (
+        <div style={{ display: "grid", gap: 12, marginTop: 12, padding: 12, border: "1px solid var(--line)", borderRadius: 12 }}>
+          <ZoneSelect value={f.timezone} onChange={(z) => set("timezone", z)} label="These hours are in" />
+          <WeeklyEditor value={f.weekly} onChange={(w) => set("weekly", w)} />
+        </div>
+      )}
+      <h3 className={s.h3} style={{ marginTop: 20 }}>
+        Dates for this event only
+      </h3>
+      <p className={s.hint}>Close a day or set special hours just for this event. Days off on the Hours tab still apply.</p>
+      <OverridesEditor value={f.overrides} onChange={(o) => set("overrides", o)} />
+
+      <h3 className={s.h3} style={{ marginTop: 24 }}>
+        Questions on the booking form
+      </h3>
+      <p className={s.hint}>Name and email are always asked and always required. Your questions come after; tick Required for the ones a guest must answer. Answers land in the booking, the invite and the host email.</p>
       <div style={{ display: "grid", gap: 8 }}>
         {f.questions.map((q, i) => (
           <div key={i} className={s.qRow}>
@@ -677,21 +771,108 @@ function Row({ k, children }: { k: string; children: React.ReactNode }) {
 
 const ORDER = [1, 2, 3, 4, 5, 6, 0];
 
+/** Drop closed days so a week saves as only its open days. */
+const cleanWeekly = (w: WeeklyHours): WeeklyHours => Object.fromEntries(Object.entries(w).filter(([, r]) => r.length));
+
+/** One week of hours, a row per day, up to 4 ranges a day. */
+function WeeklyEditor({ value, onChange }: { value: WeeklyHours; onChange: (w: WeeklyHours) => void }) {
+  const setDay = (d: number, ranges: TimeRange[]) => onChange({ ...value, [String(d)]: ranges });
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      {ORDER.map((d) => {
+        const ranges = value[String(d)] ?? [];
+        return (
+          <div key={d} className={s.row}>
+            <label className={s.check2} style={{ width: 72 }}>
+              <input type="checkbox" checked={ranges.length > 0} onChange={(e) => setDay(d, e.target.checked ? [{ start: "09:00", end: "17:00" }] : [])} />
+              {WEEKDAYS[d]}
+            </label>
+            {ranges.length === 0 && <span className={s.muted}>Unavailable</span>}
+            {ranges.map((r, i) => (
+              <RangeInput key={i} value={r} onChange={(nr) => setDay(d, ranges.map((x, j) => (j === i ? nr : x)))} onRemove={() => setDay(d, ranges.filter((_, j) => j !== i))} />
+            ))}
+            {ranges.length > 0 && ranges.length < 4 && (
+              <button type="button" className={`${s.ghost} ${s.small}`} aria-label={`Add hours on ${WEEKDAYS[d]}`} onClick={() => setDay(d, [...ranges, { start: "14:00", end: "17:00" }])}>
+                +
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Date overrides: a date with no hours is closed, a date with hours replaces its weekday. */
+function OverridesEditor({ value, onChange }: { value: Record<string, TimeRange[]>; onChange: (o: Record<string, TimeRange[]>) => void }) {
+  const [newDate, setNewDate] = useState("");
+  const setDate = (date: string, ranges: TimeRange[]) => onChange({ ...value, [date]: ranges });
+  return (
+    <>
+      <div className={s.row} style={{ marginBottom: 12 }}>
+        <input className={s.input} style={{ width: "auto" }} type="date" aria-label="Date" value={newDate} onChange={(e) => setNewDate(e.target.value)} />
+        <button
+          type="button"
+          className={`${s.ghost} ${s.small}`}
+          disabled={!newDate || newDate in value}
+          onClick={() => {
+            setDate(newDate, []);
+            setNewDate("");
+          }}
+        >
+          Add date
+        </button>
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {Object.keys(value)
+          .sort()
+          .map((date) => (
+            <div key={date} className={s.row}>
+              <span style={{ width: 96, fontVariantNumeric: "tabular-nums" }}>{date}</span>
+              {value[date].length === 0 && <span className={s.badge}>Closed</span>}
+              {value[date].map((r, i) => (
+                <RangeInput
+                  key={i}
+                  value={r}
+                  onChange={(nr) => setDate(date, value[date].map((x, j) => (j === i ? nr : x)))}
+                  onRemove={() => setDate(date, value[date].filter((_, j) => j !== i))}
+                />
+              ))}
+              <button type="button" className={`${s.ghost} ${s.small}`} aria-label={`Add hours on ${date}`} onClick={() => setDate(date, [...value[date], { start: "09:00", end: "12:00" }])}>
+                +
+              </button>
+              <button
+                type="button"
+                className={`${s.ghost} ${s.small}`}
+                aria-label={`Remove ${date}`}
+                onClick={() => {
+                  const n = { ...value };
+                  delete n[date];
+                  onChange(n);
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        {Object.keys(value).length === 0 && <span className={s.muted}>None.</span>}
+      </div>
+    </>
+  );
+}
+
 function HoursTab({ host, onChange }: { host: CalHost; onChange: () => Promise<void> }) {
+  const [timezone, setTimezone] = useState(host.timezone);
   const [weekly, setWeekly] = useState<WeeklyHours>(host.weekly_hours ?? {});
   const [overrides, setOverrides] = useState<Record<string, TimeRange[]>>(host.date_overrides ?? {});
-  const [newDate, setNewDate] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-
-  const setDay = (d: number, ranges: TimeRange[]) => setWeekly((w) => ({ ...w, [String(d)]: ranges }));
 
   const save = async () => {
     setBusy(true);
     setMsg(null);
     try {
-      const clean = Object.fromEntries(Object.entries(weekly).filter(([, r]) => r.length));
-      await api(`/api/admin/hosts/${host.id}`, "PATCH", { weekly_hours: clean, date_overrides: overrides });
+      await api(`/api/admin/hosts/${host.id}`, "PATCH", { timezone, weekly_hours: cleanWeekly(weekly), date_overrides: overrides });
       setMsg("Hours saved.");
       await onChange();
     } catch (e) {
@@ -706,83 +887,16 @@ function HoursTab({ host, onChange }: { host: CalHost; onChange: () => Promise<v
       <div className={s.fields}>
         <div>
           <h3 className={s.h3}>Weekly hours</h3>
-          <p className={s.hint}>In {host.timezone}. Guests see them in their own zone.</p>
-          <div style={{ display: "grid", gap: 8 }}>
-            {ORDER.map((d) => {
-              const ranges = weekly[String(d)] ?? [];
-              return (
-                <div key={d} className={s.row}>
-                  <label className={s.check2} style={{ width: 72 }}>
-                    <input type="checkbox" checked={ranges.length > 0} onChange={(e) => setDay(d, e.target.checked ? [{ start: "09:00", end: "17:00" }] : [])} />
-                    {WEEKDAYS[d]}
-                  </label>
-                  {ranges.length === 0 && <span className={s.muted}>Unavailable</span>}
-                  {ranges.map((r, i) => (
-                    <RangeInput key={i} value={r} onChange={(nr) => setDay(d, ranges.map((x, j) => (j === i ? nr : x)))} onRemove={() => setDay(d, ranges.filter((_, j) => j !== i))} />
-                  ))}
-                  {ranges.length > 0 && ranges.length < 4 && (
-                    <button type="button" className={`${s.ghost} ${s.small}`} aria-label={`Add hours on ${WEEKDAYS[d]}`} onClick={() => setDay(d, [...ranges, { start: "14:00", end: "17:00" }])}>
-                      +
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+          <p className={s.hint}>The default for every event type. An event can keep its own hours instead (edit it under Event types). Guests always see times in their own zone.</p>
+          <div style={{ marginBottom: 16 }}>
+            <ZoneSelect value={timezone} onChange={setTimezone} label="Your time zone" />
           </div>
+          <WeeklyEditor value={weekly} onChange={setWeekly} />
         </div>
         <div>
           <h3 className={s.h3}>Days off and special hours</h3>
-          <p className={s.hint}>A date here replaces its weekday. No hours = closed that day.</p>
-          <div className={s.row} style={{ marginBottom: 12 }}>
-            <input className={s.input} style={{ width: "auto" }} type="date" aria-label="Date" value={newDate} onChange={(e) => setNewDate(e.target.value)} />
-            <button
-              type="button"
-              className={`${s.ghost} ${s.small}`}
-              disabled={!newDate || newDate in overrides}
-              onClick={() => {
-                setOverrides((o) => ({ ...o, [newDate]: [] }));
-                setNewDate("");
-              }}
-            >
-              Add
-            </button>
-          </div>
-          <div style={{ display: "grid", gap: 8 }}>
-            {Object.keys(overrides)
-              .sort()
-              .map((date) => (
-                <div key={date} className={s.row}>
-                  <span style={{ width: 96, fontVariantNumeric: "tabular-nums" }}>{date}</span>
-                  {overrides[date].length === 0 && <span className={s.badge}>Closed</span>}
-                  {overrides[date].map((r, i) => (
-                    <RangeInput
-                      key={i}
-                      value={r}
-                      onChange={(nr) => setOverrides((o) => ({ ...o, [date]: o[date].map((x, j) => (j === i ? nr : x)) }))}
-                      onRemove={() => setOverrides((o) => ({ ...o, [date]: o[date].filter((_, j) => j !== i) }))}
-                    />
-                  ))}
-                  <button type="button" className={`${s.ghost} ${s.small}`} aria-label="Add hours" onClick={() => setOverrides((o) => ({ ...o, [date]: [...o[date], { start: "09:00", end: "12:00" }] }))}>
-                    +
-                  </button>
-                  <button
-                    type="button"
-                    className={`${s.ghost} ${s.small}`}
-                    aria-label={`Remove ${date}`}
-                    onClick={() =>
-                      setOverrides((o) => {
-                        const n = { ...o };
-                        delete n[date];
-                        return n;
-                      })
-                    }
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            {Object.keys(overrides).length === 0 && <span className={s.muted}>None.</span>}
-          </div>
+          <p className={s.hint}>For every event type. A date here replaces its weekday; no hours means closed that day.</p>
+          <OverridesEditor value={overrides} onChange={setOverrides} />
         </div>
       </div>
       <div className={s.actions} style={{ marginTop: 20 }}>
@@ -921,7 +1035,7 @@ function CalendarsTab({ host, onChange }: { host: CalHost; onChange: () => Promi
 /* ── Page ─────────────────────────────────────────────────────────────────────────── */
 
 function PageTab({ host, onChange, onDeleted }: { host: CalHost; onChange: () => Promise<void>; onDeleted: () => void }) {
-  const [f, setF] = useState({ name: host.name, slug: host.slug, headline: host.headline ?? "", avatar_url: host.avatar_url ?? "", timezone: host.timezone, active: host.active });
+  const [f, setF] = useState({ name: host.name, slug: host.slug, headline: host.headline ?? "", bio: host.bio ?? "", avatar_url: host.avatar_url ?? "", active: host.active });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -929,7 +1043,7 @@ function PageTab({ host, onChange, onDeleted }: { host: CalHost; onChange: () =>
     setBusy(true);
     setMsg(null);
     try {
-      await api(`/api/admin/hosts/${host.id}`, "PATCH", f);
+      await api(`/api/admin/hosts/${host.id}`, "PATCH", { ...f, slug: slugify(f.slug) });
       setMsg("Page saved.");
       await onChange();
     } catch (e) {
@@ -958,21 +1072,22 @@ function PageTab({ host, onChange, onDeleted }: { host: CalHost; onChange: () =>
         </label>
         <label className={s.label}>
           <span>Link</span>
-          <input className={s.input} value={f.slug} maxLength={41} onChange={(e) => setF({ ...f, slug: slugify(e.target.value) })} />
+          <input className={s.input} value={f.slug} maxLength={41} onChange={(e) => setF({ ...f, slug: slugTyping(e.target.value) })} />
           <span className={s.hint}>{calUrl(f.slug || "...").replace(/^https?:\/\//, "")}</span>
         </label>
         <label className={`${s.label} ${s.full}`}>
           <span>One line under your name</span>
           <input className={s.input} value={f.headline} maxLength={200} onChange={(e) => setF({ ...f, headline: e.target.value })} placeholder="Founder, Acme" />
         </label>
-        <label className={s.label}>
+        <label className={`${s.label} ${s.full}`}>
+          <span>About you</span>
+          <textarea className={s.textarea} value={f.bio} maxLength={1500} onChange={(e) => setF({ ...f, bio: e.target.value })} />
+          <span className={s.hint}>A few lines on your page. Link a word like this: [my site](https://example.com).</span>
+        </label>
+        <label className={`${s.label} ${s.full}`}>
           <span>Photo URL</span>
           <input className={s.input} value={f.avatar_url} maxLength={500} onChange={(e) => setF({ ...f, avatar_url: e.target.value })} />
-          <span className={s.hint}>https only. Empty shows your initial.</span>
-        </label>
-        <label className={s.label}>
-          <span>Time zone</span>
-          <ZoneSelect value={f.timezone} onChange={(timezone) => setF({ ...f, timezone })} />
+          <span className={s.hint}>A public https link to a square image. Empty shows your initial.</span>
         </label>
         <label className={`${s.check2} ${s.full}`}>
           <input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Page is live

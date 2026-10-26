@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   addDays,
   generateSlots,
+  scheduleFor,
   localDate,
   manageUrl,
   siteUrl,
@@ -19,6 +20,9 @@ import {
   type WeeklyHours,
 } from "./core";
 import { deleteEvent, freeBusy, insertEvent, moveEvent, sendMail } from "./google";
+import { hostEmail, inviteDescription, inviteTitle } from "./email";
+
+export { scheduleFor };
 
 /**
  * cal.ts - open-cal's data access and booking flow. Service-role only: the public booking
@@ -38,6 +42,8 @@ export type CalHost = {
   slug: string;
   name: string;
   headline: string | null;
+  /** A few lines about the host, with links. */
+  bio?: string | null;
   avatar_url: string | null;
   timezone: string;
   weekly_hours: WeeklyHours;
@@ -51,6 +57,17 @@ export type CalHost = {
 
 export type CalEventType = SlotRules & {
   id: string;
+  /** Own hours; null = the host's. */
+  weekly_hours: WeeklyHours | null;
+  /** Own dates on top of the host's days off. */
+  date_overrides: DateOverrides | null;
+  /** Zone for the own hours; null = the host's. */
+  timezone: string | null;
+  allow_guests: boolean;
+  /** Links this event used before a rename; they redirect to `slug`. */
+  previous_slugs?: string[];
+  /** Calendars only this event also checks. */
+  extra_busy_calendar_ids: string[];
   host_id: string;
   slug: string;
   name: string;
@@ -88,11 +105,21 @@ export type CalBooking = {
 };
 
 /** The fields a guest-facing page may see of a host (no email, no calendar ids). */
-export type PublicHost = Pick<CalHost, "slug" | "name" | "headline" | "avatar_url" | "timezone">;
-export type PublicEventType = Pick<CalEventType, "slug" | "name" | "description" | "duration_min" | "questions" | "color" | "max_days_ahead">;
+export type PublicHost = Pick<CalHost, "slug" | "name" | "headline" | "avatar_url" | "timezone"> & { bio: string | null };
+export type PublicEventType = Pick<CalEventType, "slug" | "name" | "description" | "duration_min" | "questions" | "color" | "max_days_ahead" | "allow_guests"> & {
+  /** The zone the hours are kept in (the event's own, else the host's): the page asks for dates in it. */
+  timezone: string;
+};
 
-export const publicHost = (h: CalHost): PublicHost => ({ slug: h.slug, name: h.name, headline: h.headline, avatar_url: h.avatar_url, timezone: h.timezone });
-export const publicType = (t: CalEventType): PublicEventType => ({
+export const publicHost = (h: CalHost): PublicHost => ({
+  slug: h.slug,
+  name: h.name,
+  headline: h.headline,
+  bio: h.bio ?? null,
+  avatar_url: h.avatar_url,
+  timezone: h.timezone,
+});
+export const publicType = (t: CalEventType, host: Pick<CalHost, "timezone" | "weekly_hours" | "date_overrides">): PublicEventType => ({
   slug: t.slug,
   name: t.name,
   description: t.description,
@@ -100,6 +127,8 @@ export const publicType = (t: CalEventType): PublicEventType => ({
   questions: t.questions,
   color: t.color,
   max_days_ahead: t.max_days_ahead,
+  allow_guests: t.allow_guests !== false,
+  timezone: scheduleFor(host, t).timezone,
 });
 
 const HOUR = 3_600_000;
@@ -138,6 +167,13 @@ export async function eventTypes(svc: SupabaseClient, hostId: string, opts: { ac
 
 export async function eventType(svc: SupabaseClient, hostId: string, slug: string): Promise<CalEventType | null> {
   return must(await svc.from("cal_event_types").select("*").eq("host_id", hostId).eq("slug", slug).maybeSingle()) as CalEventType | null;
+}
+
+/** An event whose link used to be `slug` (renamed since), for the redirect. */
+export async function eventTypeByOldSlug(svc: SupabaseClient, hostId: string, slug: string): Promise<CalEventType | null> {
+  const r = await svc.from("cal_event_types").select("*").eq("host_id", hostId).contains("previous_slugs", [slug]).limit(1).maybeSingle();
+  if (r.error) return null; // an older database without the column: no redirect
+  return r.data as CalEventType | null;
 }
 
 export async function bookingByToken(svc: SupabaseClient, token: string): Promise<CalBooking | null> {
@@ -181,9 +217,11 @@ export async function availability(
   opts: { now?: number; exclude?: Interval } = {},
 ): Promise<Availability> {
   const now = opts.now ?? Date.now();
-  const from = zonedToUtc(fromDate, "00:00", host.timezone) - DAY;
-  const to = zonedToUtc(addDays(toDate, 1), "00:00", host.timezone) + DAY;
-  const calendars = host.busy_calendar_ids.length ? host.busy_calendar_ids : [host.email];
+  const sched = scheduleFor(host, type);
+  const from = zonedToUtc(fromDate, "00:00", sched.timezone) - DAY;
+  const to = zonedToUtc(addDays(toDate, 1), "00:00", sched.timezone) + DAY;
+  const base = host.busy_calendar_ids.length ? host.busy_calendar_ids : [host.email];
+  const calendars = [...new Set([...base, ...(type.extra_busy_calendar_ids ?? [])])];
   const fb = await freeBusy(host.email, calendars, Math.max(from, now - DAY), to);
   const busy = opts.exclude ? withoutInterval(fb.busy, opts.exclude) : fb.busy;
 
@@ -202,15 +240,15 @@ export async function availability(
     for (const r of rows) {
       const t = Date.parse(r.start_at);
       if (opts.exclude && t === opts.exclude.start) continue;
-      const d = localDate(t, host.timezone);
+      const d = localDate(t, sched.timezone);
       bookedPerDay[d] = (bookedPerDay[d] ?? 0) + 1;
     }
   }
 
   const slots = generateSlots({
-    timezone: host.timezone,
-    weekly: host.weekly_hours ?? {},
-    overrides: host.date_overrides ?? {},
+    timezone: sched.timezone,
+    weekly: sched.weekly,
+    overrides: sched.overrides,
     rules: type,
     busy,
     bookedPerDay,
@@ -222,7 +260,7 @@ export async function availability(
 }
 
 async function slotIsOpen(svc: SupabaseClient, host: CalHost, type: CalEventType, start: number, exclude?: Interval): Promise<boolean> {
-  const date = localDate(start, host.timezone);
+  const date = localDate(start, scheduleFor(host, type).timezone);
   const { slots } = await availability(svc, host, type, date, date, { exclude });
   return slots.some((s) => s.start === start);
 }
@@ -245,16 +283,6 @@ export function clientIp(req: Request): string | null {
 
 const newToken = () => randomBytes(24).toString("base64url");
 
-function describe(host: CalHost, type: CalEventType, form: BookingForm, token: string): string {
-  const lines = [`${type.name} with ${host.name}.`, ""];
-  for (const q of type.questions) {
-    const a = form.answers[q.id];
-    if (a) lines.push(`${q.label}`, a, "");
-  }
-  lines.push(`Need to reschedule or cancel? ${manageUrl(token)}`);
-  return lines.join("\n");
-}
-
 export type BookInput = {
   host: CalHost;
   type: CalEventType;
@@ -266,8 +294,9 @@ export type BookInput = {
 };
 
 export async function book(svc: SupabaseClient, input: BookInput): Promise<CalBooking> {
-  const { host, type, start, form } = input;
+  const { host, type, start } = input;
   if (!host.active || !type.active) throw new Error("not_found");
+  const form = type.allow_guests === false ? { ...input.form, guests: [] } : input.form;
 
   if (input.ipHash) {
     const { count } = await svc
@@ -313,8 +342,8 @@ export async function book(svc: SupabaseClient, input: BookInput): Promise<CalBo
   try {
     const ev = await insertEvent(host.email, {
       calendarId: host.target_calendar_id || host.email,
-      summary: `${form.name} x ${host.name} - ${type.name}`,
-      description: describe(host, type, form, token),
+      summary: inviteTitle(form.name, host.name, type.name),
+      description: inviteDescription({ event: type.name, host: host.name, questions: type.questions, answers: form.answers, manageUrl: manageUrl(token), siteUrl: siteUrl() }),
       start,
       end,
       attendees,
@@ -394,24 +423,25 @@ export async function reschedule(svc: SupabaseClient, booking: CalBooking, start
 async function notifyHost(host: CalHost, type: CalEventType | null, b: CalBooking, kind: "new" | "moved" | "cancelled"): Promise<void> {
   if (process.env.HOST_EMAILS !== "gmail") return;
   try {
-    const when = new Intl.DateTimeFormat("en-GB", { timeZone: host.timezone, dateStyle: "full", timeStyle: "short" }).format(new Date(b.start_at));
-    const head = kind === "new" ? "New booking" : kind === "moved" ? "Booking moved" : "Booking cancelled";
-    const lines = [`${head}: ${b.event_name}`, `${when} (${host.timezone})`, "", `${b.guest_name} <${b.guest_email}>`];
-    if (b.guest_timezone) lines.push(`Their time zone: ${b.guest_timezone}`);
-    for (const q of type?.questions ?? []) if (b.answers[q.id]) lines.push("", q.label, b.answers[q.id]);
-    if (b.cancel_reason) lines.push("", "Reason", b.cancel_reason);
-    const src = Object.entries(b.meta ?? {}).filter(([, v]) => v);
-    if (src.length) lines.push("", src.map(([k, v]) => `${k}: ${v}`).join("\n"));
-    if (b.meet_url && kind !== "cancelled") lines.push("", `Meet: ${b.meet_url}`);
-    lines.push("", `All bookings: ${siteUrl()}/admin`);
-    await sendMail({
-      from: host.email,
-      fromName: "open-cal",
-      to: [host.email],
-      replyTo: b.guest_email,
-      subject: `${head}: ${b.guest_name} - ${b.event_name}`,
-      text: lines.join("\n"),
+    const mail = hostEmail({
+      kind,
+      event: b.event_name,
+      hostTimezone: host.timezone,
+      start: b.start_at,
+      end: b.end_at,
+      guestName: b.guest_name,
+      guestEmail: b.guest_email,
+      guestTimezone: b.guest_timezone,
+      questions: type?.questions ?? [],
+      answers: b.answers ?? {},
+      meta: b.meta ?? {},
+      meetUrl: b.meet_url,
+      cancelReason: b.cancel_reason,
+      cancelledBy: b.cancelled_by,
+      movedFrom: kind === "moved" ? b.rescheduled_from : null,
+      adminUrl: `${siteUrl()}/admin`,
     });
+    await sendMail({ from: host.email, fromName: "open-cal", to: [host.email], replyTo: b.guest_email, ...mail });
   } catch (e) {
     console.error("[cal] host email failed", (e as Error)?.message);
   }

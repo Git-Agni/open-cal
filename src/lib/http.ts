@@ -71,6 +71,7 @@ export function parseHostPatch(b: Record<string, unknown>): Partial<CalHost> {
     out.slug = b.slug;
   }
   if ("headline" in b) out.headline = str(b.headline, 200) || null;
+  if ("bio" in b) out.bio = str(b.bio, 1500) || null;
   if ("avatar_url" in b) {
     const v = str(b.avatar_url, 500) || null;
     if (v && !/^https:\/\//.test(v)) throw new Error("invalid_input");
@@ -138,6 +139,33 @@ export function parseTypePatch(b: Record<string, unknown>, base?: CalEventType):
     out.position = n;
   }
   if ("active" in b) out.active = Boolean(b.active);
+  if ("allow_guests" in b) out.allow_guests = Boolean(b.allow_guests);
+  if ("extra_busy_calendar_ids" in b) {
+    const v = b.extra_busy_calendar_ids;
+    if (!Array.isArray(v) || v.length > 20 || v.some((x) => typeof x !== "string" || !x.trim() || x.length > 300)) throw new Error("invalid_input");
+    out.extra_busy_calendar_ids = [...new Set((v as string[]).map((x) => x.trim()))];
+  }
+  // Own hours: null goes back to the host's.
+  if ("weekly_hours" in b) {
+    if (b.weekly_hours === null) out.weekly_hours = null;
+    else {
+      const v = parseWeekly(b.weekly_hours);
+      if (!v) throw new Error("invalid_input");
+      out.weekly_hours = v;
+    }
+  }
+  if ("date_overrides" in b) {
+    if (b.date_overrides === null) out.date_overrides = null;
+    else {
+      const v = parseOverrides(b.date_overrides);
+      if (!v) throw new Error("invalid_input");
+      out.date_overrides = v;
+    }
+  }
+  if ("timezone" in b) {
+    if (b.timezone !== null && !isTimeZone(b.timezone)) throw new Error("invalid_input");
+    out.timezone = (b.timezone as string | null) || null;
+  }
   const ruleKeys: (keyof SlotRules)[] = ["duration_min", "increment_min", "buffer_before_min", "buffer_after_min", "min_notice_min", "max_days_ahead", "max_per_day"];
   if (ruleKeys.some((k) => k in b)) {
     const rules = parseRules(Object.fromEntries(ruleKeys.filter((k) => k in b).map((k) => [k, b[k]])), base);

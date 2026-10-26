@@ -13,8 +13,10 @@ import {
   parseOverrides,
   parseQuestions,
   parseRules,
+  scheduleFor,
   parseWeekly,
   slugify,
+  slugTyping,
   weekday,
   withoutInterval,
   zonedToUtc,
@@ -107,6 +109,9 @@ describe("input checks", () => {
     expect(slugify("Ada Lovelace")).toBe("ada-lovelace");
     expect(slugify("Acme Studio - Intro Call (15 mins)")).toBe("acme-studio-intro-call-15-mins");
     expect(isHostSlug("ada-lovelace")).toBe(true);
+    expect(slugTyping("intro-")).toBe("intro-");
+    expect(slugTyping("Intro Call")).toBe("intro-call");
+    expect(slugify("intro-")).toBe("intro");
     expect(isHostSlug("b")).toBe(false);
     expect(isHostSlug("api")).toBe(false);
     expect(isHostSlug("admin")).toBe(false);
@@ -143,5 +148,26 @@ describe("input checks", () => {
     expect(parseRules({ duration_min: 2 })).toBeNull();
     expect(parseRules({ max_per_day: 3 })?.max_per_day).toBe(3);
     expect(parseRules({ max_per_day: null }, { ...DEFAULT_RULES, max_per_day: 3 })?.max_per_day).toBeNull();
+  });
+});
+
+describe("scheduleFor", () => {
+  const host = { timezone: "America/New_York", weekly_hours: { "1": [{ start: "08:00", end: "13:00" }] }, date_overrides: { "2026-12-24": [] } };
+  it("follows the host when the event has no hours of its own", () => {
+    expect(scheduleFor(host, { weekly_hours: null, timezone: null, date_overrides: null })).toEqual({
+      timezone: "America/New_York",
+      weekly: host.weekly_hours,
+      overrides: { "2026-12-24": [] },
+    });
+  });
+  it("uses the event's own week and zone, and lets its dates win", () => {
+    const own = { "2": [{ start: "10:00", end: "12:00" }] };
+    const r = scheduleFor(host, { weekly_hours: own, timezone: "Europe/Berlin", date_overrides: { "2026-12-24": [{ start: "09:00", end: "10:00" }] } });
+    expect(r.timezone).toBe("Europe/Berlin");
+    expect(r.weekly).toBe(own);
+    expect(r.overrides["2026-12-24"]).toEqual([{ start: "09:00", end: "10:00" }]);
+  });
+  it("tolerates a row without the per-event columns", () => {
+    expect(scheduleFor(host, {}).weekly).toBe(host.weekly_hours);
   });
 });
