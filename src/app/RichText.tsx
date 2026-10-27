@@ -1,14 +1,29 @@
 import { Fragment } from "react";
 
 /**
- * Description text with links. Understands `[label](https://...)` and bare https:// links;
+ * Description text with links. Understands `[label](https://...)`, bare https:// links and a
+ * `---` line as a divider;
  * newlines stay newlines (the parent keeps `white-space: pre-line`). Never renders HTML from
  * the text.
  */
 
 const TOKEN = /\[([^\]\n]{1,120})\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]+[^\s<>().,!?;:'"])/g;
 
-export function RichText({ text, className }: { text: string; className?: string }) {
+export function RichText({ text, className, ruleClassName }: { text: string; className?: string; ruleClassName?: string }) {
+  // A line that is only "---" is a divider, not text.
+  const parts = text.split(/\n?^\s*-{3,}\s*$\n?/m);
+  if (parts.length > 1) {
+    return (
+      <span className={className}>
+        {parts.map((p, i) => (
+          <Fragment key={i}>
+            {i > 0 && <span className={ruleClassName} role="separator" />}
+            <RichText text={p.trim()} />
+          </Fragment>
+        ))}
+      </span>
+    );
+  }
   const out: React.ReactNode[] = [];
   let last = 0;
   for (const m of text.matchAll(TOKEN)) {

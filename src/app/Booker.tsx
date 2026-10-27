@@ -36,6 +36,11 @@ const ERRORS: Record<string, string> = {
   not_found: "This booking page is not available anymore.",
   booking_cancelled: "This booking was cancelled.",
   booking_past: "This meeting has already happened.",
+  // Google refused the meeting (with HOST_EMAILS=gmail the host gets an email with the guest's details).
+  calendar_request_failed: "We could not create the meeting just now. Please try again in a minute.",
+  calendar_token_failed: "We could not create the meeting just now. Please try again in a minute.",
+  calendar_not_authorized: "We could not create the meeting just now. Please try again in a minute.",
+  server_error: "Something went wrong on our side. Please try again in a minute.",
 };
 
 function guessZone(): string {
@@ -221,7 +226,7 @@ export function Booker({ host, type, reschedule, initialSlots }: Props) {
         </ul>
         {type.description && (
           <p className={`${s.sub} ${s.rich}`}>
-            <RichText text={type.description} />
+            <RichText text={type.description} ruleClassName={s.rule} />
           </p>
         )}
 
@@ -482,12 +487,12 @@ function DetailsForm({
           {err}
         </p>
       )}
-      <div className={s.actions}>
-        <button type="submit" className={s.primary} disabled={busy}>
-          {busy ? "One moment…" : reschedule ? "Move my meeting" : "Book it"}
-        </button>
+      <div className={`${s.actions} ${s.formActions}`}>
         <button type="button" className={s.ghost} onClick={onBack} disabled={busy}>
           Back
+        </button>
+        <button type="submit" className={s.primary} disabled={busy}>
+          {busy ? "One moment…" : reschedule ? "Move my meeting" : "Book it"}
         </button>
       </div>
     </form>

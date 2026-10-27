@@ -5,12 +5,12 @@
   min-height: 100vh;
   color: #f4f1ee;
   background:
-    radial-gradient(900px 500px at 85% -10%, rgba(255, 138, 101, 0.12), transparent 60%),
-    radial-gradient(700px 400px at -10% 110%, rgba(255, 138, 101, 0.06), transparent 60%),
+    radial-gradient(900px 500px at 85% -10%, rgba(244, 95, 69, 0.12), transparent 60%),
+    radial-gradient(700px 400px at -10% 110%, rgba(244, 95, 69, 0.06), transparent 60%),
     #08080a;
   font-family: var(--font-sans), system-ui, sans-serif;
-  --accent: #ff8a65;
-  --accent-soft: rgba(255, 138, 101, 0.14);
+  --accent: #f45f45;
+  --accent-soft: rgba(244, 95, 69, 0.14);
   --line: #26262b;
   --card: rgba(21, 21, 24, 0.92);
   --muted: #a39e99;
@@ -123,7 +123,7 @@
     transform 0.15s;
 }
 .typeCard:hover {
-  border-color: rgba(255, 138, 101, 0.6);
+  border-color: rgba(244, 95, 69, 0.6);
   transform: translateY(-1px);
 }
 .typeName {
@@ -222,11 +222,11 @@
   cursor: pointer;
 }
 .dayOpen:hover {
-  background: rgba(255, 138, 101, 0.26);
+  background: rgba(244, 95, 69, 0.26);
 }
 .daySel {
   background: var(--accent);
-  color: #0b0b0d;
+  color: #ffffff;
 }
 .daySel:hover {
   background: var(--accent);
@@ -266,7 +266,7 @@
 .input:focus,
 .textarea:focus,
 .select:focus {
-  outline: 2px solid rgba(255, 138, 101, 0.55);
+  outline: 2px solid rgba(244, 95, 69, 0.55);
   outline-offset: 1px;
 }
 .textarea {
@@ -311,7 +311,7 @@
   font-weight: 600;
   padding: 11px 8px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 138, 101, 0.5);
+  border: 1px solid rgba(244, 95, 69, 0.5);
   background: transparent;
   color: var(--accent);
   cursor: pointer;
@@ -348,6 +348,18 @@
   gap: 10px;
   align-items: center;
 }
+/* The booking form's Back + Book it sit bottom right, primary last. */
+.formActions {
+  justify-content: flex-end;
+}
+
+/* "---" on its own line in a description draws a rule. */
+.rule {
+  display: block;
+  height: 1px;
+  margin: 10px 0;
+  background: var(--line);
+}
 .primary {
   font: inherit;
   font-weight: 700;
@@ -356,7 +368,7 @@
   border-radius: 999px;
   border: 0;
   background: var(--accent);
-  color: #0b0b0d;
+  color: #ffffff;
   cursor: pointer;
   text-decoration: none;
   display: inline-block;

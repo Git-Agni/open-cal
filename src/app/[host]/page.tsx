@@ -48,7 +48,7 @@ export default async function HostPage({ params }: Params) {
       </div>
       {host.bio && (
         <p className={`${s.bio} ${s.rich}`} style={{ margin: "-8px 0 24px" }}>
-          <RichText text={host.bio} />
+          <RichText text={host.bio} ruleClassName={s.rule} />
         </p>
       )}
       <div className={s.types}>

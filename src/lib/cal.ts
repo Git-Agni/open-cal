@@ -19,8 +19,8 @@ import {
   type SlotRules,
   type WeeklyHours,
 } from "./core";
-import { deleteEvent, freeBusy, insertEvent, moveEvent, sendMail } from "./google";
-import { hostEmail, inviteDescription, inviteTitle } from "./email";
+import { deleteEvent, freeBusy, getEvent, insertEvent, moveEvent, sendMail } from "./google";
+import { hostEmail, inviteDescription, inviteTitle, whenLine } from "./email";
 
 export { scheduleFor };
 
@@ -66,6 +66,10 @@ export type CalEventType = SlotRules & {
   allow_guests: boolean;
   /** Links this event used before a rename; they redirect to `slug`. */
   previous_slugs?: string[];
+  /** Send this event's invites from this Workspace address instead of the host's. */
+  organizer_email?: string | null;
+  /** Google Calendar colour for its bookings, "1".."11". */
+  calendar_color?: string | null;
   /** Calendars only this event also checks. */
   extra_busy_calendar_ids: string[];
   host_id: string;
@@ -101,6 +105,8 @@ export type CalBooking = {
   cancelled_by: string | null;
   cancel_reason: string | null;
   rescheduled_from: string | null;
+  /** The address the Google event was made as; null = the host. */
+  organizer_email?: string | null;
   created_at: string;
 };
 
@@ -311,9 +317,7 @@ export async function book(svc: SupabaseClient, input: BookInput): Promise<CalBo
 
   const end = start + type.duration_min * 60_000;
   const token = newToken();
-  const ins = await svc
-    .from("cal_bookings")
-    .insert({
+  const record = {
       host_id: host.id,
       event_type_id: type.id,
       event_name: type.name,
@@ -326,36 +330,192 @@ export async function book(svc: SupabaseClient, input: BookInput): Promise<CalBo
       meta: form.guests.length ? { ...input.meta, guests: form.guests.join(", ") } : input.meta,
       manage_token: token,
       ip_hash: input.ipHash,
-    })
-    .select("*")
-    .single();
+  };
+  let ins = await svc.from("cal_bookings").insert(record).select("*").single();
+  // A confirmed row at this minute whose meeting is gone from Google is a ghost, not a booking:
+  // release it and try once more, so it never blocks a real guest.
+  if (ins.error?.code === "23505" && (await releaseGhost(svc, host, start))) {
+    ins = await svc.from("cal_bookings").insert(record).select("*").single();
+  }
   if (ins.error) {
     if (ins.error.code === "23505") throw new Error("slot_taken");
     throw new Error(ins.error.message);
   }
   const row = ins.data as CalBooking;
 
-  const attendees = [
-    { email: form.email, displayName: form.name },
-    ...[...new Set([...form.guests, ...type.extra_attendees.map((e) => e.toLowerCase())])].filter((e) => e && e !== host.email && e !== form.email).map((email) => ({ email })),
-  ];
+  const others = [...new Set([...form.guests, ...type.extra_attendees.map((e) => e.toLowerCase())])].filter((e) => e && e !== form.email);
+  const event = {
+    summary: inviteTitle(form.name, host.name, type.name),
+    description: inviteDescription({ event: type.name, host: host.name, questions: type.questions, answers: form.answers, manageUrl: manageUrl(token), siteUrl: siteUrl() }),
+    start,
+    end,
+    bookingId: row.id,
+    sourceUrl: siteUrl(),
+    colorId: type.calendar_color ?? null,
+  };
   try {
-    const ev = await insertEvent(host.email, {
-      calendarId: host.target_calendar_id || host.email,
-      summary: inviteTitle(form.name, host.name, type.name),
-      description: inviteDescription({ event: type.name, host: host.name, questions: type.questions, answers: form.answers, manageUrl: manageUrl(token), siteUrl: siteUrl() }),
-      start,
-      end,
-      attendees,
-      bookingId: row.id,
-      sourceUrl: siteUrl(),
-    });
-    const upd = await svc.from("cal_bookings").update({ google_event_id: ev.id, meet_url: ev.meetUrl }).eq("id", row.id).select("*").single();
+    // Invites from another address (say a product's own support@): made as that user on their
+    // calendar, with the host invited so it is on their own calendar too. If Google will not let
+    // us act for that address, fall back to the host so the booking still lands.
+    const alt = type.organizer_email && type.organizer_email.toLowerCase() !== host.email ? type.organizer_email.toLowerCase() : null;
+    let organizer: string | null = null;
+    let ev: Awaited<ReturnType<typeof insertEvent>> | null = null;
+    if (alt) {
+      try {
+        ev = await insertEvent(alt, {
+          ...event,
+          calendarId: alt,
+          attendees: [{ email: form.email, displayName: form.name }, { email: host.email }, ...others.filter((e) => e !== alt && e !== host.email).map((email) => ({ email }))],
+        });
+        organizer = alt;
+      } catch (e) {
+        console.error("[cal] organizer fallback", alt, (e as Error)?.message);
+      }
+    }
+    if (!ev) {
+      ev = await insertEvent(host.email, {
+        ...event,
+        calendarId: host.target_calendar_id || host.email,
+        attendees: [{ email: form.email, displayName: form.name }, ...others.filter((e) => e !== host.email).map((email) => ({ email }))],
+      });
+    }
+    const upd = await svc
+      .from("cal_bookings")
+      .update({ google_event_id: ev.id, meet_url: ev.meetUrl, ...(organizer ? { organizer_email: organizer } : {}) })
+      .eq("id", row.id)
+      .select("*")
+      .single();
     after(notifyHost(host, type, { ...row, meet_url: ev.meetUrl }, "new"));
     return (upd.data as CalBooking) ?? { ...row, google_event_id: ev.id, meet_url: ev.meetUrl };
   } catch (e) {
     await svc.from("cal_bookings").delete().eq("id", row.id);
+    after(alertFailed(host, type, form, start, end, (e as Error)?.message ?? "unknown"));
     throw e;
+  }
+}
+
+/**
+ * The confirmed booking holding (host, start), released when its Google meeting is gone. A row
+ * still waiting for its meeting (no event id yet, under two minutes old) is someone booking right
+ * now and is left alone. True when the minute is free again.
+ */
+async function releaseGhost(svc: SupabaseClient, host: CalHost, start: number): Promise<boolean> {
+  const b = must(
+    await svc.from("cal_bookings").select("*").eq("host_id", host.id).eq("start_at", new Date(start).toISOString()).eq("status", "confirmed").maybeSingle(),
+  ) as CalBooking | null;
+  if (!b) return true;
+  if (!b.google_event_id) {
+    if (Date.now() - Date.parse(b.created_at) < 2 * 60_000) return false;
+  } else if (await eventLive(host, b)) return false;
+  await markGone(svc, b);
+  return true;
+}
+
+/** Whether the booking's meeting still stands in Google, and when. Unknown (Google down) counts as standing. */
+async function eventLive(host: CalHost, b: CalBooking) {
+  if (!b.google_event_id) return null;
+  const org = b.organizer_email;
+  try {
+    return await getEvent(org || host.email, org || host.target_calendar_id || host.email, b.google_event_id);
+  } catch (e) {
+    console.error("[cal] event check", b.id, (e as Error)?.message);
+    return { start: Date.parse(b.start_at), end: Date.parse(b.end_at) };
+  }
+}
+
+async function markGone(svc: SupabaseClient, b: CalBooking): Promise<void> {
+  const now = new Date().toISOString();
+  await svc
+    .from("cal_bookings")
+    .update({ status: "cancelled", cancelled_at: now, cancelled_by: "calendar", cancel_reason: "Removed from Google Calendar", updated_at: now })
+    .eq("id", b.id)
+    .eq("status", "confirmed");
+}
+
+/**
+ * Google Calendar back into open-cal (cron, /api/jobs/cal-sync): every upcoming booking whose
+ * meeting was deleted in Google is cancelled here, and one moved in Google takes the new time,
+ * so the booking page offers exactly what the calendar shows.
+ */
+export async function syncBookings(svc: SupabaseClient): Promise<{ checked: number; released: number; moved: number }> {
+  const rows = must(
+    await svc.from("cal_bookings").select("*").eq("status", "confirmed").gt("end_at", new Date().toISOString()).not("google_event_id", "is", null).limit(500),
+  ) as CalBooking[];
+  const hosts = new Map<string, CalHost | null>();
+  let released = 0;
+  let moved = 0;
+  for (const b of rows) {
+    if (!hosts.has(b.host_id)) hosts.set(b.host_id, await hostById(svc, b.host_id));
+    const host = hosts.get(b.host_id);
+    if (!host) continue;
+    const ev = await eventLive(host, b);
+    if (!ev) {
+      await markGone(svc, b);
+      released++;
+    } else if (ev.start !== Date.parse(b.start_at) || ev.end !== Date.parse(b.end_at)) {
+      const r = await svc
+        .from("cal_bookings")
+        .update({ start_at: new Date(ev.start).toISOString(), end_at: new Date(ev.end).toISOString(), rescheduled_from: b.start_at, updated_at: new Date().toISOString() })
+        .eq("id", b.id);
+      if (r.error) console.error("[cal] sync move", b.id, r.error.message);
+      else moved++;
+    }
+  }
+  return { checked: rows.length, released, moved };
+}
+
+/**
+ * Calendars that count for busy time but Google will not read for the host (unshared, deleted,
+ * renamed): their meetings stop blocking slots, so double bookings become possible. Daily check.
+ */
+export async function unreadableCalendars(svc: SupabaseClient): Promise<{ host: CalHost; calendars: string[] }[]> {
+  const out: { host: CalHost; calendars: string[] }[] = [];
+  for (const host of (await listHosts(svc)).filter((h) => h.active)) {
+    const types = await eventTypes(svc, host.id, { activeOnly: true });
+    const base = host.busy_calendar_ids.length ? host.busy_calendar_ids : [host.email];
+    const ids = [...new Set([...base, ...types.flatMap((t) => t.extra_busy_calendar_ids ?? [])])];
+    const fb = await freeBusy(host.email, ids, Date.now(), Date.now() + DAY);
+    const bad = Object.keys(fb.errors);
+    if (bad.length) out.push({ host, calendars: bad });
+  }
+  return out;
+}
+
+/** Tell the host a guest tried to book and Google refused, so the lead is not lost. Never throws. */
+async function alertFailed(host: CalHost, type: CalEventType, form: BookingForm, start: number, end: number, error: string): Promise<void> {
+  const when = `${whenLine(new Date(start).toISOString(), new Date(end).toISOString(), host.timezone)} (${host.timezone})`;
+  const answers = type.questions.filter((q) => form.answers[q.id]).map((q) => `${q.label}\n${form.answers[q.id]}`);
+  await mailHost(host, {
+    subject: `Booking failed: ${form.name} · ${type.name}`,
+    replyTo: form.email,
+    text: [
+      `${form.name} <${form.email}> tried to book ${type.name} for ${when}, but Google Calendar refused the meeting (${error}).`,
+      "They saw an error and nothing is on your calendar. Reply to this email to reach them.",
+      ...(answers.length ? ["", ...answers] : []),
+    ].join("\n"),
+  });
+}
+
+export async function alertUnreadable(host: CalHost, calendars: string[]): Promise<void> {
+  await mailHost(host, {
+    subject: "open-cal can't read some of your calendars",
+    text: [
+      "open-cal could not read these calendars, so their meetings are NOT blocking your booking times:",
+      "",
+      ...calendars.map((c) => `- ${c}`),
+      "",
+      `Re-share them with your Google account (See all event details or free/busy), or remove them in ${siteUrl()}/admin > Calendars / event settings.`,
+    ].join("\n"),
+  });
+}
+
+/** A plain note to the host from their own mailbox. Only with HOST_EMAILS=gmail; never throws. */
+async function mailHost(host: CalHost, m: { subject: string; text: string; replyTo?: string }): Promise<void> {
+  if (process.env.HOST_EMAILS !== "gmail") return;
+  try {
+    await sendMail({ from: host.email, fromName: "open-cal", to: [host.email], ...m });
+  } catch (e) {
+    console.error("[cal] host alert failed", (e as Error)?.message);
   }
 }
 
@@ -363,7 +523,10 @@ export async function cancel(svc: SupabaseClient, booking: CalBooking, by: strin
   if (booking.status === "cancelled") return booking;
   const host = await hostById(svc, booking.host_id);
   if (!host) throw new Error("not_found");
-  if (booking.google_event_id) await deleteEvent(host.email, host.target_calendar_id || host.email, booking.google_event_id);
+  if (booking.google_event_id) {
+    const org = booking.organizer_email;
+    await deleteEvent(org || host.email, org || host.target_calendar_id || host.email, booking.google_event_id);
+  }
   const r = await svc
     .from("cal_bookings")
     .update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancelled_by: by, cancel_reason: reason?.slice(0, 1000) || null, updated_at: new Date().toISOString() })
@@ -402,7 +565,36 @@ export async function reschedule(svc: SupabaseClient, booking: CalBooking, start
     throw new Error(upd.error.message);
   }
   try {
-    if (booking.google_event_id) await moveEvent(host.email, host.target_calendar_id || host.email, booking.google_event_id, start, end);
+    const org = booking.organizer_email;
+    let gone = !booking.google_event_id;
+    if (booking.google_event_id) {
+      try {
+        await moveEvent(org || host.email, org || host.target_calendar_id || host.email, booking.google_event_id, start, end);
+      } catch (e) {
+        if ((e as Error).message !== "calendar_event_gone") throw e;
+        gone = true;
+      }
+    }
+    // The meeting was deleted in Google: make a fresh one at the new time rather than fail.
+    if (gone) {
+      const others = [...new Set([...(booking.meta?.guests ?? "").split(",").map((x) => x.trim().toLowerCase()), ...type.extra_attendees.map((x) => x.toLowerCase())])].filter(
+        (x) => x && x !== booking.guest_email && x !== host.email,
+      );
+      const ev = await insertEvent(host.email, {
+        summary: inviteTitle(booking.guest_name, host.name, type.name),
+        description: inviteDescription({ event: type.name, host: host.name, questions: type.questions, answers: booking.answers ?? {}, manageUrl: manageUrl(booking.manage_token), siteUrl: siteUrl() }),
+        start,
+        end,
+        bookingId: booking.id,
+        sourceUrl: siteUrl(),
+        colorId: type.calendar_color ?? null,
+        calendarId: host.target_calendar_id || host.email,
+        attendees: [{ email: booking.guest_email, displayName: booking.guest_name }, ...others.map((email) => ({ email }))],
+      });
+      await svc.from("cal_bookings").update({ google_event_id: ev.id, meet_url: ev.meetUrl, organizer_email: null }).eq("id", booking.id);
+      (upd.data as CalBooking).google_event_id = ev.id;
+      (upd.data as CalBooking).meet_url = ev.meetUrl;
+    }
   } catch (e) {
     await svc.from("cal_bookings").update({ start_at: booking.start_at, end_at: booking.end_at, rescheduled_from: booking.rescheduled_from }).eq("id", booking.id);
     throw e;

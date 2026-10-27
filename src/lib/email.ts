@@ -69,6 +69,10 @@ export function whenLine(start: string, end: string, tz: string): string {
 
 const zoneName = (tz: string) => tz.replace(/_/g, " ");
 
+/** Montserrat where the mail app loads web fonts (Apple Mail, iOS), a clean sans everywhere else. */
+const FONT = "'Montserrat',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+const BRAND = "#f45f45";
+
 export function hostEmail(i: HostEmailInput): { subject: string; text: string; html: string } {
   const head = HEAD[i.kind];
   const subject = `${head}: ${i.guestName} · ${i.event}`;
@@ -97,22 +101,24 @@ export function hostEmail(i: HostEmailInput): { subject: string; text: string; h
     `All bookings: ${i.adminUrl}`,
   ].join("\n");
 
+  // A label over its value: the label in small semibold grey (sentence case, so a long question
+  // stays readable), the value in normal text.
   const row = (label: string, value: string) =>
-    `<tr><td style="padding:14px 0 0"><div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#8a8580;margin-bottom:4px">${esc(label)}</div><div style="font-size:15px;line-height:1.55;color:#1c1917">${value}</div></td></tr>`;
+    `<tr><td style="padding:16px 0 0;border-top:1px solid #f0ebe6"><div style="font-family:${FONT};font-size:12px;font-weight:600;line-height:1.4;color:#8a8580;margin-bottom:6px">${esc(label)}</div><div style="font-family:${FONT};font-size:15px;line-height:1.6;color:#1c1917">${value}</div></td></tr>`;
 
-  const html = `<!doctype html><html><body style="margin:0;padding:0;background:#f5f3f1">
+  const html = `<!doctype html><html><head><meta charset="utf-8"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet"></head><body style="margin:0;padding:0;background:#f5f3f1;font-family:${FONT}">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3f1;padding:24px 12px"><tr><td align="center">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #ebe6e1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
-<tr><td style="background:#0b0b0d;padding:16px 24px;font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#ff8a65">open-cal</td></tr>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #ebe6e1;font-family:${FONT}">
+<tr><td style="background:#0b0b0d;padding:16px 24px;font-family:${FONT};font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:${BRAND}">open-cal</td></tr>
 <tr><td style="padding:24px 24px 4px">
-<div style="display:inline-block;font-size:12px;font-weight:700;color:#fff;background:${TONE[i.kind]};border-radius:999px;padding:4px 10px">${esc(head)}</div>
-<div style="font-size:22px;line-height:1.3;font-weight:700;color:#1c1917;margin-top:12px">${esc(i.event)}</div>
-<div style="font-size:16px;color:#1c1917;margin-top:8px"><b>${esc(hostWhen)}</b></div>
-${guestWhen ? `<div style="font-size:14px;color:#57534e;margin-top:2px">${esc(guestWhen)}</div>` : ""}
-${movedFrom ? `<div style="font-size:14px;color:#57534e;margin-top:2px;text-decoration:line-through">${esc(movedFrom)}</div>` : ""}
+<div style="display:inline-block;font-family:${FONT};font-size:12px;font-weight:700;color:#fff;background:${TONE[i.kind]};border-radius:999px;padding:4px 10px">${esc(head)}</div>
+<div style="font-family:${FONT};font-size:21px;line-height:1.3;font-weight:700;color:#1c1917;margin-top:12px">${esc(i.event)}</div>
+<div style="font-family:${FONT};font-size:16px;color:#1c1917;margin-top:8px"><b>${esc(hostWhen)}</b></div>
+${guestWhen ? `<div style="font-family:${FONT};font-size:14px;color:#57534e;margin-top:2px">${esc(guestWhen)}</div>` : ""}
+${movedFrom ? `<div style="font-family:${FONT};font-size:14px;color:#57534e;margin-top:2px;text-decoration:line-through">${esc(movedFrom)}</div>` : ""}
 </td></tr>
 <tr><td style="padding:0 24px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-${row("Guest", `${esc(i.guestName)} · <a href="mailto:${esc(i.guestEmail)}" style="color:#c2410c">${esc(i.guestEmail)}</a>`)}
+${row("Guest", `${esc(i.guestName)} · <a href="mailto:${esc(i.guestEmail)}" style="color:${BRAND}">${esc(i.guestEmail)}</a>`)}
 ${reason.length ? row("Cancellation", reason.map((r) => multiline(String(r))).join("<br>")) : ""}
 ${qa.map((q) => row(q.label, multiline(i.answers[q.id]))).join("")}
 ${source.length ? row("Came from", esc(source.map(([k, v]) => `${k}: ${v}`).join(" · "))) : ""}
@@ -120,10 +126,10 @@ ${source.length ? row("Came from", esc(source.map(([k, v]) => `${k}: ${v}`).join
 <tr><td style="padding:22px 24px 26px">
 ${
   i.meetUrl && i.kind !== "cancelled"
-    ? `<a href="${esc(i.meetUrl)}" style="display:inline-block;background:#ff8a65;color:#0b0b0d;font-weight:700;font-size:14px;text-decoration:none;border-radius:999px;padding:11px 20px;margin-right:8px">Join Google Meet</a>`
+    ? `<a href="${esc(i.meetUrl)}" style="display:inline-block;background:${BRAND};color:#ffffff;font-family:${FONT};font-weight:700;font-size:14px;text-decoration:none;border-radius:999px;padding:11px 20px;margin-right:8px">Join Google Meet</a>`
     : ""
-}<a href="${esc(i.adminUrl)}" style="display:inline-block;color:#1c1917;font-weight:600;font-size:14px;text-decoration:none;border:1px solid #d6d3d1;border-radius:999px;padding:10px 18px">All bookings</a>
-<div style="font-size:12px;color:#8a8580;margin-top:16px">Reply to this email to write to ${esc(i.guestName)}.</div>
+}<a href="${esc(i.adminUrl)}" style="display:inline-block;color:#1c1917;font-family:${FONT};font-weight:600;font-size:14px;text-decoration:none;border:1px solid #d6d3d1;border-radius:999px;padding:10px 18px">All bookings</a>
+<div style="font-family:${FONT};font-size:12px;color:#8a8580;margin-top:16px">Reply to this email to write to ${esc(i.guestName)}.</div>
 </td></tr>
 </table></td></tr></table></body></html>`;
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { calUrl, DEFAULT_QUESTIONS, fmtDuration, slugify, slugTyping, WEEKDAYS, type Question, type QuestionKind, type TimeRange, type WeeklyHours } from "@/lib/core";
+import { calUrl, DEFAULT_QUESTIONS, GOOGLE_COLORS, fmtDuration, slugify, slugTyping, WEEKDAYS, type Question, type QuestionKind, type TimeRange, type WeeklyHours } from "@/lib/core";
 import type { CalBooking, CalEventType, CalHost } from "@/lib/cal";
 import type { CalendarInfo } from "@/lib/google";
 import s from "../ui.module.css";
@@ -429,6 +429,8 @@ function TypeEditor({
     questions: type?.questions ?? DEFAULT_QUESTIONS,
     allow_guests: type?.allow_guests !== false,
     extraBusy: (type?.extra_busy_calendar_ids ?? []).join(", "),
+    organizer: type?.organizer_email ?? "",
+    color: type?.calendar_color ?? "",
     own_hours: type?.weekly_hours != null,
     timezone: type?.timezone ?? host.timezone,
     weekly: (type?.weekly_hours ?? host.weekly_hours ?? {}) as WeeklyHours,
@@ -458,6 +460,8 @@ function TypeEditor({
       questions: f.questions.map((q) => ({ ...q, id: q.id || slugify(q.label, 30) || `q${Math.random().toString(36).slice(2, 6)}` })),
       allow_guests: f.allow_guests,
       extra_busy_calendar_ids: f.extraBusy.split(/[\s,]+/).filter(Boolean),
+      organizer_email: f.organizer.trim() || null,
+      calendar_color: f.color || null,
       // Own hours, or null to follow the page's hours.
       weekly_hours: f.own_hours ? cleanWeekly(f.weekly) : null,
       timezone: f.own_hours ? f.timezone : null,
@@ -542,6 +546,26 @@ function TypeEditor({
           <span>Also check these calendars</span>
           <input className={s.input} value={f.extraBusy} onChange={(e) => set("extraBusy", e.target.value)} placeholder="teammate@yourcompany.com" />
           <span className={s.hint}>On top of the Calendars tab, for this event only (a teammate who must be free too).</span>
+        </label>
+        <label className={s.label}>
+          <span>Calendar colour</span>
+          <span className={s.row} style={{ gap: 8 }}>
+            <span aria-hidden="true" style={{ width: 14, height: 14, flexShrink: 0, borderRadius: 999, border: "1px solid var(--line)", background: f.color ? GOOGLE_COLORS[f.color]?.hex : "transparent" }} />
+            <select className={s.input} value={f.color} onChange={(e) => set("color", e.target.value)}>
+              <option value="">Calendar default</option>
+              {Object.entries(GOOGLE_COLORS).map(([id, c]) => (
+                <option key={id} value={id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </span>
+          <span className={s.hint}>Every booking of this event shows in this colour on your Google Calendar.</span>
+        </label>
+        <label className={s.label}>
+          <span>Send invites from</span>
+          <input className={s.input} value={f.organizer} onChange={(e) => set("organizer", e.target.value)} placeholder={host.email} />
+          <span className={s.hint}>Another Workspace address in your domain. Empty = {host.email}. You stay invited either way.</span>
         </label>
         <label className={s.label}>
           <span>Also invite</span>

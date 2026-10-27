@@ -140,6 +140,16 @@ export function parseTypePatch(b: Record<string, unknown>, base?: CalEventType):
   }
   if ("active" in b) out.active = Boolean(b.active);
   if ("allow_guests" in b) out.allow_guests = Boolean(b.allow_guests);
+  if ("calendar_color" in b) {
+    const v = b.calendar_color;
+    if (v !== null && v !== "" && !(typeof v === "string" && /^(?:[1-9]|1[01])$/.test(v))) throw new Error("invalid_input");
+    out.calendar_color = (v as string | null) || null;
+  }
+  if ("organizer_email" in b) {
+    const v = typeof b.organizer_email === "string" ? b.organizer_email.trim().toLowerCase() : "";
+    if (v && !isEmail(v)) throw new Error("invalid_input");
+    out.organizer_email = v || null;
+  }
   if ("extra_busy_calendar_ids" in b) {
     const v = b.extra_busy_calendar_ids;
     if (!Array.isArray(v) || v.length > 20 || v.some((x) => typeof x !== "string" || !x.trim() || x.length > 300)) throw new Error("invalid_input");

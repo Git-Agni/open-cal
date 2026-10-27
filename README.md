@@ -13,12 +13,14 @@ We built this at [Agniverse](https://agniverse.co) to replace Calendly for our t
 - **Google does the invites.** The booking is created on the host's calendar with the host as organizer and a Google Meet link. Google sends the invite, the reminders, the update when a time moves and the cancellation. There is no guest email code in this repo.
 - **Reschedule and cancel links.** Every invite carries a private link (`/b/<token>`) where the guest moves or cancels the meeting. Moving re-checks free/busy and patches the same Google event.
 - **A form like Calendly's.** Name, email, "Add guests" (up to 10, switchable per event), plus your own questions (short text, long text, link, phone, pick one). Answers go into the invite, the admin and the optional host email.
-- **Rules per event type.** Length, start-time grid, minimum notice, how far ahead, buffers before and after, max bookings per day, extra attendees on every call, extra calendars that must be free too.
+- **Rules per event type.** Length, start-time grid, minimum notice, how far ahead, buffers before and after, max bookings per day, extra attendees on every call, extra calendars that must be free too, a Google Calendar colour for its bookings, and invites sent from another Workspace address (say your product's own support@) with the host still invited.
 - **Weekly hours and date overrides** in the host's time zone, and any event can keep its own hours and dates instead, like Calendly's per-event schedules. DST is handled with `Intl` only, no date library. The slot engine is pure functions with unit tests (`src/lib/core.ts`).
 - **Fast pages.** The whole booking window's times load with the page from one free/busy read, so the calendar paints ready and month changes are instant.
 - **Links that don't break.** Rename an event's link and the old one keeps redirecting to it, `utm_` tags included. Duplicate an event type in one click (the copy starts switched off).
-- **Bio and links.** A photo, a headline and a few lines about the host. Descriptions take `[label](https://...)` links.
+- **Bio and links.** A photo, a headline and a few lines about the host. Descriptions take `[label](https://...)` links, and a `---` line draws a divider.
 - **Race-safe.** A partial unique index means two guests can never book the same start. The loser gets "that time was just taken".
+- **Follows your calendar.** Delete a booked meeting in Google Calendar and its slot opens again; move it there and the booking takes the new time. A cron job syncs them, and a guest picking a minute whose meeting is gone gets it straight away. Rescheduling a meeting you deleted makes a fresh one.
+- **No lost leads.** If Google refuses a booking, the guest sees a clear try-again message and (with host emails on) you get their name, email and answers. A daily check emails you when a busy calendar stops being readable.
 - **Basic abuse guards.** A limit of 5 bookings per network per hour (IPs are stored as a keyed hash, never raw).
 - **Admin page** at `/admin` behind one password. Manage pages, event types, hours, calendars and bookings for everyone on the deploy.
 - **Optional host email.** A card to the host with the time in both zones, a Join button and the guest's answers, sent from the host's own Gmail through the API.
@@ -110,8 +112,15 @@ The app owns the whole domain: `/<host>` and `/<host>/<event>` are public, `/b/<
 | `HOST_EMAILS` | no | See below. |
 | `IP_HASH_SALT` | no | Key for hashing guest IPs (rate limit). Defaults to `ADMIN_PASSWORD`. |
 | `HIDE_CREDIT` | no | `1` removes the "Booked with open-cal by Agniverse" line under the pages. |
+| `CRON_SECRET` | recommended | Any long random string. Lets the Vercel cron call `/api/jobs/cal-sync`. |
 
-`HOST_EMAILS=gmail` turns on the host notification: each new, moved or cancelled booking sends the host a plain-text note from their own mailbox with the guest's answers, reply-to the guest. Needs the Gmail API enabled and the `gmail.send` scope on the delegation entry. Leave it unset and Google's own calendar notifications are all you get.
+`HOST_EMAILS=gmail` turns on the host notification: each new, moved or cancelled booking sends the host an email card from their own mailbox with the guest's answers, reply-to the guest. Needs the Gmail API enabled and the `gmail.send` scope on the delegation entry. Leave it unset and Google's own calendar notifications are all you get.
+
+`HOST_EMAILS=gmail` also turns on the failed-booking and unreadable-calendar alerts.
+
+### Google Calendar sync
+
+[`vercel.json`](vercel.json) runs `/api/jobs/cal-sync?calendars=1` once a day at 06:00 UTC, which works on Vercel's free plan. On Vercel Pro, add a second entry with `"schedule": "*/10 * * * *"` and path `/api/jobs/cal-sync` to sync every 10 minutes, or call it from any cron service with the header `Authorization: Bearer <CRON_SECRET>`. Without `CRON_SECRET` the route refuses every call.
 
 Copy [`.env.example`](.env.example) to `.env.local` for local dev.
 
@@ -136,7 +145,7 @@ Local dev talks to the real Google calendars of the hosts you configure, so a te
 - `src/lib/cal.ts` data access and the booking flow (check, insert, Google, roll back on failure).
 - `src/lib/auth.ts` the admin password and its signed cookie.
 - `src/app/[host]`, `src/app/b/[token]`, `src/app/Booker.tsx` the guest pages.
-- `src/app/admin` the admin. `src/app/api/public` and `src/app/api/admin` the routes.
+- `src/app/admin` the admin. `src/app/api/public` and `src/app/api/admin` the routes. `src/app/api/jobs/cal-sync` the Google sync.
 - `supabase/schema.sql` the three tables.
 
 ## Security notes

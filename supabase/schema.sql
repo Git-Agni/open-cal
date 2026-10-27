@@ -76,7 +76,7 @@ create table if not exists cal_bookings (
   meet_url        text,
   ip_hash         text,
   cancelled_at    timestamptz,
-  cancelled_by    text,                                  -- 'guest' or 'host'
+  cancelled_by    text,                                  -- 'guest', 'host' or 'calendar' (deleted in Google)
   cancel_reason   text,
   rescheduled_from timestamptz,
   created_at      timestamptz not null default now(),
@@ -98,6 +98,12 @@ alter table cal_event_types add column if not exists timezone text;
 alter table cal_event_types add column if not exists allow_guests boolean not null default true;
 alter table cal_event_types add column if not exists extra_busy_calendar_ids text[] not null default '{}';
 alter table cal_event_types add column if not exists previous_slugs text[] not null default '{}';
+-- An event can send its invites from another Workspace address; each booking keeps the address
+-- its Google event was made as, so moves and cancels act as the same one.
+alter table cal_event_types add column if not exists organizer_email text;
+alter table cal_bookings    add column if not exists organizer_email text;
+-- The Google Calendar colour ("1".."11") every booking of this event gets.
+alter table cal_event_types add column if not exists calendar_color text;
 
 alter table cal_hosts       enable row level security;
 alter table cal_event_types enable row level security;

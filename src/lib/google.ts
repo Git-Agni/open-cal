@@ -156,6 +156,8 @@ export type EventInput = {
   attendees: { email: string; displayName?: string }[];
   bookingId: string;
   sourceUrl: string;
+  /** Google Calendar event colour, "1".."11" (calendar_color on the event type). */
+  colorId?: string | null;
 };
 
 export type CreatedEvent = { id: string; meetUrl: string | null; htmlLink: string | null };
@@ -178,6 +180,7 @@ export async function insertEvent(subject: string, e: EventInput): Promise<Creat
       end: { dateTime: new Date(e.end).toISOString() },
       attendees: e.attendees,
       guestsCanModify: false,
+      ...(e.colorId ? { colorId: e.colorId } : {}),
       reminders: { useDefault: true },
       conferenceData: { createRequest: { requestId: `cal-${e.bookingId}`, conferenceSolutionKey: { type: "hangoutsMeet" } } },
       extendedProperties: { private: { cal_booking_id: e.bookingId } },
@@ -185,6 +188,29 @@ export async function insertEvent(subject: string, e: EventInput): Promise<Creat
     }),
   });
   return { id: String(r.id), meetUrl: meetOf(r), htmlLink: typeof r.htmlLink === "string" ? r.htmlLink : null };
+}
+
+export type EventState = { start: number; end: number };
+
+/**
+ * Where the meeting stands in Google now: null when it was deleted or cancelled there (by hand,
+ * from the calendar), so the booking behind it is no longer real.
+ */
+export async function getEvent(subject: string, calendarId: string, eventId: string): Promise<EventState | null> {
+  try {
+    const e = await gcal<{ status?: string; start?: { dateTime?: string }; end?: { dateTime?: string } }>(
+      subject,
+      `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    );
+    if (e.status === "cancelled") return null;
+    const start = Date.parse(e.start?.dateTime ?? "");
+    const end = Date.parse(e.end?.dateTime ?? "");
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    return { start, end };
+  } catch (err) {
+    if ((err as Error).message === "calendar_event_gone") return null;
+    throw err;
+  }
 }
 
 /** Move the meeting; Google tells every guest. */
