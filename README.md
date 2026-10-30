@@ -1,12 +1,12 @@
-# open-cal
+# Open Cal
 
 Booking pages that run on your own Google Calendar. One Next.js app, one Supabase database, one Google service account. No per-seat pricing.
 
 **Overview, setup walkthrough and the free setup playbook:** [agniverse.co/open-source/open-cal](https://agniverse.co/open-source/open-cal)
 
-We built this at [Agniverse](https://agniverse.co) to replace Calendly for our team. Calendly charges per seat for something that is, underneath, one call to Google's free/busy API plus an event insert. So this does exactly that and nothing else. The live one is [cal.agniverse.co/an-nayal](https://cal.agniverse.co/an-nayal).
+We built this at [Agniverse](https://agniverse.co) to replace Calendly for our team. Calendly charges per seat for something that is, underneath, one call to Google's free/busy API plus an event insert. So this does exactly that and nothing else.
 
-![The live booking page at cal.agniverse.co: month grid, open days, times in the guest's zone](docs/preview.png)
+![A booking page for a sample host: month grid, open days, times in the guest's zone](docs/preview.png)
 
 ## What you get
 
